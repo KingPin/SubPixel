@@ -1,0 +1,24 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Local run state
+.subpixel/
+*.log
+
+# Local agent/assistant working files: plans, specs, reviews, tool settings.
+.claude/
+docs/superpowers/
+
+# Local-only scratch: third-party clones kept as design source material.
+# Nothing in here is vendored or tracked.
+reference/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# OS
+.DS_Store
+Thumbs.db

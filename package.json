@@ -1,0 +1,35 @@
+{
+  "name": "subpixel",
+  "version": "0.0.0",
+  "description": "Image generation and editing for AI coding agents, powered by your existing ChatGPT/Codex subscription.",
+  "license": "MIT",
+  "author": "KingPin <28669+KingPin@users.noreply.github.com>",
+  "repository": { "type": "git", "url": "git+https://github.com/KingPin/subpixel.git" },
+  "type": "module",
+  "engines": { "node": ">=20.0.0" },
+  "bin": { "spx": "dist/cli/bin.js", "subpixel": "dist/cli/bin.js" },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist", "README.md", "LICENSE"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "yaml": "^2.5.1"
+  },
+  "peerDependencies": {
+    "sharp": "^0.33.0"
+  },
+  "peerDependenciesMeta": {
+    "sharp": { "optional": true }
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

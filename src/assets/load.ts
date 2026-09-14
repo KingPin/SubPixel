@@ -1,5 +1,6 @@
+import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parse } from "yaml";
 import { ConfigError } from "../core/errors.js";
 import { manifestPathFor } from "../engine/manifest.js";
@@ -25,9 +26,37 @@ export interface LoadedAssets {
   assets: ResolvedAsset[];
 }
 
+/**
+ * The path with every EXISTING component's symlinks resolved.
+ *
+ * `path.relative` compares text. A `..` is caught by it; a symlink is not, and
+ * `assets.yml` sits in the same repository as the tree it points into — so a
+ * checked-in `public -> /etc` makes a lexically clean `public/hero.png` write to
+ * /etc/hero.png. Outputs do not exist yet, so the walk resolves the deepest
+ * ancestor that does and re-joins the rest.
+ *
+ * ponytail: a check, not a lock. A symlink planted between this call and the write
+ * still wins; closing that needs an O_NOFOLLOW open in the writer.
+ */
+function realish(path: string): string {
+  const tail: string[] = [];
+  let head = path;
+  for (;;) {
+    try {
+      return join(realpathSync(head), ...tail);
+    } catch {
+      const parent = dirname(head);
+      // Reached the root without finding anything that exists. Nothing to resolve.
+      if (parent === head) return path;
+      tail.unshift(basename(head));
+      head = parent;
+    }
+  }
+}
+
 function within(dir: string, path: string): string {
   const absolute = isAbsolute(path) ? path : resolve(dir, path);
-  const rel = relative(dir, absolute);
+  const rel = relative(realish(dir), realish(absolute));
   // A manifest is often committed and run by CI. A path that climbs out of the
   // project turns "generate my assets" into "write wherever this string says",
   // which is not a capability a YAML file in a pull request should have.

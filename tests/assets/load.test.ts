@@ -1,6 +1,6 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConfigError } from "../../src/core/errors.js";
 import { loadAssets } from "../../src/assets/load.js";
@@ -186,5 +186,34 @@ assets:
     prompt: two
 `);
     await expect(loadAssets(path)).rejects.toThrow(/hero-800w/);
+  });
+});
+
+describe("loadAssets containment", () => {
+  it("refuses an out path that leaves the manifest directory through a symlink", async () => {
+    const elsewhere = await mkdtemp(join(tmpdir(), "subpixel-elsewhere-"));
+    const path = await manifest(`
+defaults:
+  outDir: escape
+assets:
+  - id: hero
+    prompt: a dashboard
+`);
+    await symlink(elsewhere, join(dirname(path), "escape"), "dir");
+    await expect(loadAssets(path)).rejects.toBeInstanceOf(ConfigError);
+  });
+
+  it("refuses a reference that leaves the manifest directory through a symlink", async () => {
+    const elsewhere = await mkdtemp(join(tmpdir(), "subpixel-elsewhere-"));
+    await writeFile(join(elsewhere, "secret.png"), "not really a png");
+    const path = await manifest(`
+assets:
+  - id: hero
+    prompt: a dashboard
+    references:
+      - peek/secret.png
+`);
+    await symlink(elsewhere, join(dirname(path), "peek"), "dir");
+    await expect(loadAssets(path)).rejects.toBeInstanceOf(ConfigError);
   });
 });

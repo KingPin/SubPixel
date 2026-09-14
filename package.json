@@ -2,7 +2,7 @@
   "name": "subpixel",
   "version": "0.0.0",
   "description": "Image generation and editing for AI coding agents, powered by your existing ChatGPT/Codex subscription.",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "author": "KingPin <28669+KingPin@users.noreply.github.com>",
   "repository": { "type": "git", "url": "git+https://github.com/KingPin/subpixel.git" },
   "type": "module",

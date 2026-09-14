@@ -126,6 +126,10 @@ describe("error taxonomy", () => {
       // Our slug appears, but the verdict belongs to the other model.
       ["Generation for driver-a failed: the image model gpt-image-2 is not available", "driver-a"],
       [`{"model":"driver-a","error":{"message":"image model gpt-image-2 is not available"}}`, "driver-a"],
+      // A dotted version number inside the slug. The verdict is still an
+      // availability verdict, so the shape has to survive the dot rather than
+      // reading it as the end of a sentence and falling through to ContentBlocked.
+      ["The model `gpt-image-2.5-flare` is not available", "gpt-5.6-sol"],
       // No subject at all: a bare code cannot say which of the two models it means.
       [`{"error":{"code":"model_not_found"}}`, "driver-a"],
       // No model was recorded for the request, so nothing can be verified.

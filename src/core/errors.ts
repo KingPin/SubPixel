@@ -168,13 +168,21 @@ export class OutputError extends SubpixelError {
  * that was malformed from the start. Existence and entitlement are the only two
  * things this list is allowed to recognise.
  */
+/**
+ * A run of at most 40 characters that stays inside one sentence.
+ *
+ * A dot only ends a sentence when whitespace or the end of the string follows it.
+ * A plain `[^.]` run breaks on the dot inside a version number, so "The model
+ * `gpt-image-2.5-flare` is not available" stopped being recognised as an
+ * availability verdict at all and fell through to `ContentBlocked`.
+ */
 const MODEL_UNAVAILABLE_PATTERNS: readonly RegExp[] = [
   /\bmodel_not_found\b/i,
   /\bunknown[_ ]model\b/i,
   /\binvalid[_ ]model\b/i,
-  /\bmodel\b[^.]{0,40}\bnot (?:found|available|enabled)\b/i,
-  /\bmodel\b[^.]{0,40}\bdoes not exist\b/i,
-  /\bdo(?:es)? not have access to\b[^.]{0,40}\bmodel\b/i,
+  /\bmodel\b(?:[^.]|\.(?=\S)){0,40}\bnot (?:found|available|enabled)\b/i,
+  /\bmodel\b(?:[^.]|\.(?=\S)){0,40}\bdoes not exist\b/i,
+  /\bdo(?:es)? not have access to\b(?:[^.]|\.(?=\S)){0,40}\bmodel\b/i,
 ];
 
 /**

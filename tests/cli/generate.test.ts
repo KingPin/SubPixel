@@ -7,7 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 const generate = vi.fn();
 vi.mock("../../src/engine/generate.js", () => ({ generate }));
 
-const { runGenerate } = await import("../../src/cli/generate.js");
+const { resolveSharedFields, runGenerate } = await import("../../src/cli/generate.js");
 const { loadConfig } = await import("../../src/config/load.js");
 
 describe("spx generate --json", () => {
@@ -129,5 +129,28 @@ describe("config precedence", () => {
 
   it("rejects a malformed --variants before generating", async () => {
     await expect(runGenerate("a fox", { variants: "400,wide" })).rejects.toThrow(/wide/);
+  });
+});
+
+describe("resolveSharedFields and --transparent", () => {
+  it("defaults to png over a format inherited from the config", () => {
+    const resolved = resolveSharedFields({ transparent: true }, undefined, { format: "jpeg" } as never);
+    expect(resolved.format).toBe("png");
+  });
+
+  it("defaults to png over a format inherited from a style", () => {
+    const resolved = resolveSharedFields({ transparent: true }, { format: "jpeg" }, {} as never);
+    expect(resolved.format).toBe("png");
+  });
+
+  it("leaves an inherited webp alone, which carries alpha too", () => {
+    const resolved = resolveSharedFields({ transparent: true }, { format: "webp" }, {} as never);
+    expect(resolved.format).toBe("webp");
+  });
+
+  it("still refuses an explicit --format jpeg", () => {
+    expect(() => resolveSharedFields({ transparent: true, format: "jpeg" }, undefined, {} as never)).toThrow(
+      /no alpha channel/,
+    );
   });
 });

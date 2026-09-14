@@ -80,25 +80,30 @@ export function resolveSharedFields(
   style: StyleDefinition | undefined,
   config: SubpixelConfig,
 ): Omit<GenerateRequest, "prompt" | "outputPath"> {
-  const format = options.format ?? style?.format ?? config.format;
+  const inherited = options.format ?? style?.format ?? config.format;
   const transparent = options.transparent === true;
 
   // JPEG has no alpha channel. Producing one anyway would flatten the transparency
-  // onto black and hand the user a file that looks like the feature failed. Checked
-  // here, so `generate` and `edit` refuse it identically.
-  if (transparent && format === "jpeg") {
+  // onto black and hand the user a file that looks like the feature failed. Only an
+  // EXPLICIT --format jpeg is an error: a jpeg inherited from a style or the project
+  // config is a default for ordinary images, and refusing it would make
+  // `spx generate --transparent` unusable in any project whose config says jpeg.
+  // Checked here, so `generate` and `edit` refuse it identically.
+  if (transparent && options.format === "jpeg") {
     throw new ConfigError(
       "--transparent cannot produce JPEG, which has no alpha channel. Use png or webp.",
     );
   }
 
+  // An inherited jpeg — or no format at all — becomes png, which is what the CLI
+  // reference promises. webp is left alone: it carries alpha too.
+  const format = transparent && (inherited === undefined || inherited === "jpeg") ? "png" : inherited;
+
   return {
     size: options.size ?? style?.size,
     quality: options.quality ?? style?.quality,
     background: options.background ?? style?.background,
-    // With no explicit format, transparency implies PNG rather than the configured
-    // default, which may well be jpeg.
-    format: transparent ? (format ?? "png") : format,
+    format,
     exactSize: options.exactSize,
     model: options.model,
     transparent,

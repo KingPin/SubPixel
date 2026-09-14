@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { ModelUnavailable, OutputError } from "../core/errors.js";
+import { ConfigError, ModelUnavailable, OutputError } from "../core/errors.js";
 import { createDeadline, type Deadline } from "../core/deadline.js";
 import { withFileLock, type LockHandle } from "../core/fsx.js";
 import { silentLogger, type Logger } from "../core/logger.js";
@@ -204,6 +204,16 @@ async function postProcess(
  * sharp would break the common case where the backend simply returns WebP.
  */
 export async function preflightPostProcessing(request: GenerateRequest): Promise<void> {
+  // JPEG has no alpha channel. `postProcess` chroma-keys to PNG and then converts
+  // to the requested format, so this combination silently flattens the transparency
+  // it was asked to produce. The CLI refuses it too, with flag-specific wording —
+  // this is the boundary check, because `generate()` is public API and `assets.yml`
+  // reaches it without passing through `resolveSharedFields` at all.
+  if (request.transparent && request.format === "jpeg") {
+    throw new ConfigError(
+      "transparent cannot produce JPEG, which has no alpha channel. Use png or webp.",
+    );
+  }
   await preflightExactSize(request.exactSize);
   // Same reasoning as --exact-size: discovering a missing optional dependency after
   // the image is generated costs a unit of quota for an image the user never gets.

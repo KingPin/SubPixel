@@ -65,6 +65,16 @@ describe("generate", () => {
     expect((await readdir(join(stateDir, "cache"))).length).toBe(2);
   });
 
+  it("refuses transparency on JPEG before spending anything", async () => {
+    const provider = vi.fn(okProvider);
+    // The CLI refuses this too, but assets.yml and any direct caller of generate()
+    // never pass through resolveSharedFields.
+    await expect(
+      generate({ prompt: "a fox", transparent: true, format: "jpeg" }, deps(provider)),
+    ).rejects.toBeInstanceOf(ConfigError);
+    expect(provider).not.toHaveBeenCalled();
+  });
+
   it("serves a repeat request from cache without calling the backend", async () => {
     const provider = vi.fn(okProvider);
     await generate({ prompt: "a fox" }, deps(provider));

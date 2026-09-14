@@ -72,19 +72,28 @@ export async function* parseSse(
         throw new StreamAborted(`Stream exceeded its ${totalMs}ms total budget.`);
       }
 
-      const budget = Math.min(stallMs, deadline.remainingMs);
       let timer: ReturnType<typeof setTimeout> | undefined;
+      let onAbort: (() => void) | undefined;
       const stall = new Promise<never>((_, reject) => {
+        // Two independent clocks, and each one owns exactly one of them.
+        //
+        // The stall timer owns `stallMs`. The DEADLINE owns the total budget, via
+        // its own signal — not via a second timer here clamped to its remainder.
+        // Scheduling a duplicate timer for the same instant makes which of the two
+        // fires first a coin flip, and when this one won the parser reported the
+        // budget as exceeded while `deadline.signal.aborted` was still false, so a
+        // caller inspecting the signal saw a live deadline after a deadline abort.
+        onAbort = () => {
+          reject(new StreamAborted(`Stream exceeded its ${totalMs}ms total budget.`));
+        };
+        if (deadline.signal.aborted) {
+          onAbort();
+          return;
+        }
+        deadline.signal.addEventListener("abort", onAbort, { once: true });
         timer = setTimeout(
-          () =>
-            reject(
-              new StreamAborted(
-                budget < stallMs
-                  ? `Stream exceeded its ${totalMs}ms total budget.`
-                  : `Stream produced no data for ${budget}ms.`,
-              ),
-            ),
-          budget,
+          () => reject(new StreamAborted(`Stream produced no data for ${stallMs}ms.`)),
+          stallMs,
         );
       });
 
@@ -95,6 +104,7 @@ export async function* parseSse(
         chunk = await Promise.race([reader.read(), stall]);
       } finally {
         if (timer) clearTimeout(timer);
+        if (onAbort) deadline.signal.removeEventListener("abort", onAbort);
       }
 
       if (chunk.done) {

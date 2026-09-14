@@ -126,7 +126,11 @@ describe("withFileLock", () => {
       events.push("b-end");
     });
     await Promise.all([slow, fast]);
-    expect(events).toEqual(["a-start", "a-end", "b-start", "b-end"]);
+    // Mutual exclusion is the property, not ordering. A filesystem lock is a mutex,
+    // not a queue: both callers start concurrently and whichever's first await
+    // settles first takes it, so pinning `a` to the front made this fail whenever
+    // the scheduler happened to run `b` first.
+    expect(events.join(",")).toMatch(/^(a-start,a-end,b-start,b-end|b-start,b-end,a-start,a-end)$/);
   });
 
   it("releases the lock when the callback throws", async () => {

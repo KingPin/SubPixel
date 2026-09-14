@@ -111,3 +111,23 @@ describe("buildEditRequest", () => {
     expect(request.variants).toEqual([{ width: 400 }, { width: 800 }]);
   });
 });
+
+describe("the edit command surface", () => {
+  it("registers every shared flag generate does", async () => {
+    const { buildProgram } = await import("../../src/cli/index.js");
+    const commands = (await buildProgram()).commands;
+    const flags = (name: string) =>
+      new Set(commands.find((c) => c.name() === name)!.options.map((o) => o.long ?? o.short!));
+
+    // `edit` and `generate` route through the same resolver and the same runner, so
+    // a flag registered on one and not the other is parsed by nobody: the shared code
+    // reads `options.allowPaid`, commander never sets it, and `spx edit --allow-paid`
+    // dies as an unknown option. These three are the deliberate exceptions: `edit`
+    // makes one image from one positional source.
+    const generateOnly = new Set(["-n", "--emit", "--image"]);
+    const missing = [...flags("generate")].filter(
+      (flag) => !generateOnly.has(flag) && !flags("edit").has(flag),
+    );
+    expect(missing).toEqual([]);
+  });
+});

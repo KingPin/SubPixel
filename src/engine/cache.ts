@@ -3,6 +3,7 @@ import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicPublish, atomicWrite } from "../core/fsx.js";
 import { redact } from "../core/redact.js";
+import { STYLE_TEXT_FIELDS } from "../core/types.js";
 import type { BackendName, GenerateRequest, ImageArtifact, ImageFormat } from "../core/types.js";
 import { writeImage, type WriteImageOptions } from "./output.js";
 
@@ -14,23 +15,42 @@ import { writeImage, type WriteImageOptions } from "./output.js";
  * every cached image on the day that happens — costing the user real quota for
  * pictures they already have. The model is recorded in the manifest instead.
  */
-export function cacheKey(
-  request: Pick<
+export interface CacheKeyInput
+  extends Pick<
     GenerateRequest,
-    "prompt" | "size" | "quality" | "background" | "format" | "exactSize" | "referenceImages"
-  >,
-): string {
-  const hash = createHash("sha256");
-  const field = (value: string | undefined) => hash.update(`${value ?? ""}\0`);
+    "prompt" | "size" | "quality" | "background" | "format" | "exactSize" | "style" | "transparent"
+  > {
+  /**
+   * sha256 of each reference image's CONTENTS, in the order the user gave them.
+   *
+   * Deliberately not the paths. A path says where a file was, not what was in it,
+   * and the cache exists to answer "have I drawn exactly this before".
+   */
+  referenceHashes?: string[];
+}
 
-  field(request.prompt);
-  field(request.size);
-  field(request.quality);
-  field(request.background);
-  field(request.format ?? "png");
-  field(request.exactSize);
-  for (const image of request.referenceImages ?? []) {
-    hash.update(createHash("sha256").update(image).digest("hex"));
+export function cacheKey(request: CacheKeyInput): string {
+  const hash = createHash("sha256");
+  const part = (value: string | undefined) => hash.update(`${value ?? ""}\0`);
+
+  part(request.prompt);
+  part(request.size);
+  part(request.quality);
+  part(request.background);
+  part(request.format ?? "png");
+  part(request.exactSize);
+  // `transparent` changes the PROMPT, so it changes what the backend draws. It
+  // therefore belongs in the raw key as well as the derived one — a magenta-backed
+  // render is not an alternate encoding of an ordinary render.
+  part(request.transparent ? "transparent" : "");
+  // Style text goes into the key because it goes into the prompt. Editing a style
+  // in the config must invalidate every image that style produced; leaving it out
+  // would serve yesterday's look forever.
+  for (const field of STYLE_TEXT_FIELDS) {
+    part(request.style?.[field]);
+  }
+  for (const digest of request.referenceHashes ?? []) {
+    hash.update(digest);
     hash.update("\0");
   }
   return hash.digest("hex");

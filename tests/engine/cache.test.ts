@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
+import { rawCacheKey } from "../../src/engine/generate.js";
 import {
   cacheKey,
   lookupCache,
@@ -47,14 +48,47 @@ describe("cacheKey", () => {
     expect(cacheKey({ ...BASE, background: "transparent" })).not.toBe(cacheKey(BASE));
   });
 
-  it("changes with reference images", () => {
-    expect(cacheKey({ ...BASE, referenceImages: ["data:image/png;base64,AAAA"] })).not.toBe(
-      cacheKey(BASE),
+  it("keys on reference content, not on the number of references", () => {
+    expect(cacheKey({ ...BASE, referenceHashes: ["aa"] })).not.toBe(cacheKey(BASE));
+  });
+
+  it("treats reference order as significant", () => {
+    expect(cacheKey({ ...BASE, referenceHashes: ["aa", "bb"] })).not.toBe(
+      cacheKey({ ...BASE, referenceHashes: ["bb", "aa"] }),
     );
+  });
+
+  it("leaves a reference-free key unchanged by the new field", () => {
+    expect(cacheKey({ ...BASE, referenceHashes: [] })).toBe(cacheKey(BASE));
   });
 
   it("returns a 64-character hex digest", () => {
     expect(cacheKey(BASE)).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("cacheKey and rawCacheKey with --transparent", () => {
+  it("ignores variants, which are post-processing and cost no quota", () => {
+    // Here to fail loudly the day someone widens the `Pick` to the whole request,
+    // which would re-bill every user for adding a width.
+    expect(cacheKey({ ...BASE, variants: [{ width: 400 }, { width: 800 }] } as never)).toBe(
+      cacheKey(BASE),
+    );
+  });
+
+  it("keys transparent separately", () => {
+    expect(cacheKey({ ...BASE, transparent: true })).not.toBe(cacheKey(BASE));
+  });
+
+  it("keeps transparent in the raw key", () => {
+    expect(rawCacheKey({ ...BASE, transparent: true })).not.toBe(rawCacheKey(BASE));
+  });
+
+  it("does not let the raw bank stand in for a finished transparent image", () => {
+    // Without the domain prefix from Task 6 Step 7a these two are equal, and the
+    // unprocessed magenta bytes become a cache hit the next run serves for free.
+    const request = { ...BASE, transparent: true };
+    expect(rawCacheKey(request)).not.toBe(cacheKey(request));
   });
 });
 
@@ -226,5 +260,29 @@ describe("materialiseFromCache", () => {
     const artifact = await materialiseFromCache(hit, target);
     expect(artifact.path).toBe(join(dir, "taken-v2.png"));
     expect(await readFile(target, "utf8")).toBe("existing");
+  });
+});
+
+describe("cacheKey with a style", () => {
+  const base = { prompt: "a fox", size: "1024x1024" } as const;
+
+  it("changes when a style text field changes", () => {
+    const a = cacheKey({ ...base, style: { palette: "navy" } });
+    const b = cacheKey({ ...base, style: { palette: "amber" } });
+    expect(a).not.toBe(b);
+  });
+
+  it("differs from the same prompt with no style", () => {
+    expect(cacheKey({ ...base, style: { palette: "navy" } })).not.toBe(cacheKey(base));
+  });
+
+  it("ignores key order inside the style", () => {
+    const a = cacheKey({ ...base, style: { palette: "navy", lighting: "soft" } });
+    const b = cacheKey({ ...base, style: { lighting: "soft", palette: "navy" } });
+    expect(a).toBe(b);
+  });
+
+  it("ignores generation defaults on the style, which reach the key as request fields", () => {
+    expect(cacheKey({ ...base, style: { size: "512x512" } })).toBe(cacheKey({ ...base, style: {} }));
   });
 });

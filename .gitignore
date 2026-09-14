@@ -12,7 +12,7 @@ docs/superpowers/
 
 # Local-only scratch: third-party clones kept as design source material.
 # Nothing in here is vendored or tracked.
-reference/
+/reference/
 
 # Environment
 .env

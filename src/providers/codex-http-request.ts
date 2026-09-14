@@ -64,8 +64,8 @@ export function buildBody(
   const content: Array<InputTextPart | InputImagePart> = [
     { type: "input_text", text: effectivePrompt },
   ];
-  for (const image of request.referenceImages ?? []) {
-    content.push({ type: "input_image", image_url: image });
+  for (const reference of request.resolvedReferences ?? []) {
+    content.push({ type: "input_image", image_url: reference.dataUrl });
   }
 
   return {

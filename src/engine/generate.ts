@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { ModelUnavailable, OutputError } from "../core/errors.js";
+import { ConfigError, ModelUnavailable, OutputError } from "../core/errors.js";
 import { createDeadline, type Deadline } from "../core/deadline.js";
 import { withFileLock, type LockHandle } from "../core/fsx.js";
 import { silentLogger, type Logger } from "../core/logger.js";
@@ -16,6 +17,9 @@ import { generateViaCodexExec, hasCodexBinary } from "../providers/codex-exec.js
 import { resolveChain, runWithFallback } from "../providers/resolve.js";
 import { advancePast, resolveModel, type ResolvedModel } from "../providers/models.js";
 import { formatQuota, loadQuota, saveQuota, shouldWarn } from "../providers/quota.js";
+import { chromaKey } from "./chroma.js";
+import { buildVariants, variantPath } from "./variants.js";
+import { loadReferences } from "./references.js";
 import {
   cacheKey,
   lookupCache,
@@ -27,12 +31,20 @@ import {
 import { writeManifest } from "./manifest.js";
 import { mapWithConcurrency } from "./semaphore.js";
 import {
-  enforceExactSize,
-  preflightExactSize,
   resolveOutputPath,
   sha256,
+  sniffFormat,
   writeImage,
+  type WriteImageOptions,
 } from "./output.js";
+import {
+  convert,
+  enforceExactSize,
+  loadSharp,
+  preflightExactSize,
+  probeDimensions,
+  sharpAvailable,
+} from "./sharpx.js";
 
 export type ProviderFn = (
   request: GenerateRequest,
@@ -108,9 +120,181 @@ export async function callWithModelRecovery(
   }
 }
 
-/** The key for the bytes as the backend produced them, before any local resize. */
-function rawCacheKey(request: GenerateRequest): string {
-  return cacheKey({ ...request, exactSize: undefined });
+/**
+ * The key for the bytes as the backend produced them, before any local step.
+ *
+ * The domain prefix is the point. Dropping the locally-applied fields is not
+ * enough: when none of them are set, the "raw" key equals the processed key, and
+ * the bank of unprocessed bytes becomes a cache hit that serves a half-finished
+ * image. A separate namespace makes that collision unrepresentable rather than
+ * merely unlikely.
+ *
+ * `format` is dropped for the same reason `exactSize` is: format is a LOCAL
+ * conversion (see `postProcess`), so the same backend bytes serve every requested
+ * format.
+ */
+/**
+ * A request with its references already read off disk.
+ *
+ * `generate()` builds one of these before it touches the cache, and everything
+ * downstream takes it in place of the bare request. The content digests travel with
+ * the request so that no call site can compute a key from paths by accident.
+ */
+export type ResolvedRequest = GenerateRequest & { referenceHashes?: string[] };
+
+export function rawCacheKey(request: ResolvedRequest): string {
+  return createHash("sha256")
+    .update("raw\0")
+    .update(cacheKey({ ...request, exactSize: undefined, format: undefined }))
+    .digest("hex");
+}
+
+/**
+ * Every local transformation between "bytes the backend returned" and "bytes on
+ * disk", in the one order that is correct.
+ *
+ * Fresh generation and raw-bank recovery both call THIS. That is the whole reason
+ * it exists: the two paths produced different images the last time they each had
+ * their own copy of these steps.
+ */
+async function postProcess(
+  raw: Uint8Array,
+  request: GenerateRequest,
+  warn: (message: string) => void,
+): Promise<Uint8Array> {
+  let bytes: Uint8Array = raw;
+
+  // Order matters. Keying first means `--exact-size` resamples an alpha channel,
+  // which produces a clean soft edge. Resizing first would resample a hard colour
+  // boundary and then key the blurred result, leaving a magenta halo that no
+  // tolerance setting removes.
+  if (request.transparent) bytes = await chromaKey(bytes, {});
+
+  if (request.exactSize) bytes = await enforceExactSize(bytes, request.exactSize);
+
+  // Format conversion is last, and it is a real conversion.
+  //
+  // `writeImage` does not convert: it sniffs the bytes and renames the file to
+  // match them. So a request for `hero.webp` that the backend answers with PNG
+  // bytes writes `hero.png` — and `assets.yml`, which declared `hero.webp`, then
+  // reports that asset as missing on every run, forever. A declared format is a
+  // promise about the file, not a hint about the request.
+  const actual = sniffFormat(bytes);
+  if (request.format && actual && actual !== request.format) {
+    if (await sharpAvailable()) {
+      bytes = await convert(bytes, request.format);
+    } else {
+      // Not fatal: the bytes are a real image and the user gets it, correctly named
+      // for what it is. But say plainly why the name is not the one they asked for.
+      warn(
+        `The backend returned ${actual}, not ${request.format}, and sharp is not installed to convert it. ` +
+          `Writing a .${actual} file. Run \`npm i sharp\` for ${request.format} output.`,
+      );
+    }
+  }
+
+  return bytes;
+}
+
+/**
+ * Everything a local post-processing step needs, checked BEFORE any quota is spent.
+ *
+ * Format conversion is deliberately NOT here: whether it is needed depends on what
+ * the backend returns, and refusing a `--format webp` run on a machine without
+ * sharp would break the common case where the backend simply returns WebP.
+ */
+export async function preflightPostProcessing(request: GenerateRequest): Promise<void> {
+  // JPEG has no alpha channel. `postProcess` chroma-keys to PNG and then converts
+  // to the requested format, so this combination silently flattens the transparency
+  // it was asked to produce. The CLI refuses it too, with flag-specific wording —
+  // this is the boundary check, because `generate()` is public API and `assets.yml`
+  // reaches it without passing through `resolveSharedFields` at all.
+  if (request.transparent && request.format === "jpeg") {
+    throw new ConfigError(
+      "transparent cannot produce JPEG, which has no alpha channel. Use png or webp.",
+    );
+  }
+  await preflightExactSize(request.exactSize);
+  // Same reasoning as --exact-size: discovering a missing optional dependency after
+  // the image is generated costs a unit of quota for an image the user never gets.
+  // Unlike format conversion, this need is CERTAIN from the request alone.
+  if (request.transparent) await loadSharp("--transparent");
+  if (request.variants?.length) await loadSharp("--variants");
+}
+
+/**
+ * Write every declared variant that is missing, and report what was skipped.
+ *
+ * Called by fresh generation AND by both cache-hit routes. A variant set is a
+ * property of the destination, not of the generation event: whether these bytes
+ * were paid for one second ago or came out of the cache changes nothing about
+ * which files the caller asked to exist.
+ *
+ * `writeImage` supplies the idempotency. A variant that is already on disk with
+ * exactly these bytes converges on its own path, so re-running is free and does
+ * not litter `-v2` siblings.
+ */
+async function publishVariants(
+  artifact: ImageArtifact,
+  bytes: Uint8Array,
+  request: GenerateRequest,
+  options: WriteImageOptions,
+  warn: (message: string) => void,
+): Promise<void> {
+  const specs = request.variants ?? [];
+  if (specs.length === 0) return;
+
+  // Derived from the bytes that were actually WRITTEN, not from the raw backend
+  // response. If `--exact-size` cropped the primary, every variant must be a scaled
+  // copy of that crop; deriving from the raw bytes would give a set whose members
+  // disagree about what the picture is.
+  const built = await buildVariants(
+    bytes,
+    specs.map((spec) => spec.width),
+    artifact.format,
+    warn,
+  );
+  const byWidth = new Map(built.map((variant) => [variant.width, variant]));
+
+  const written: NonNullable<ImageArtifact["variants"]> = [];
+  const skipped: number[] = [];
+  for (const spec of specs) {
+    const variant = byWidth.get(spec.width);
+    if (!variant) {
+      // buildVariants already warned. Record it so --check can tell a refused
+      // upscale apart from a missing file.
+      skipped.push(spec.width);
+      continue;
+    }
+    // The suffix comes from the spec, so a declared `@sm` lands on the filename the
+    // manifest declared and the drift check looks for.
+    const target = variantPath(artifact.path, spec.width, spec.suffix);
+    const result = await writeImage(target, variant.data, options);
+    written.push({
+      width: variant.width,
+      height: variant.height,
+      path: result.path,
+      bytes: result.bytes,
+    });
+  }
+
+  if (written.length > 0) artifact.variants = written;
+  if (skipped.length > 0) artifact.skippedVariants = skipped;
+}
+
+/**
+ * Attach the real pixel dimensions, best effort.
+ *
+ * `ImageArtifact` has declared `width?`/`height?` since M1 and nothing filled them
+ * in, so a consumer reading the sidecar manifest to lay out a page had to open the
+ * image itself. sharp is optional, so an absent dependency — or bytes it cannot
+ * decode — leaves them unset rather than failing the run.
+ */
+async function withDimensions(
+  artifact: ImageArtifact,
+  data: Uint8Array,
+): Promise<ImageArtifact> {
+  return { ...artifact, ...(await probeDimensions(data)) };
 }
 
 /**
@@ -134,9 +318,19 @@ export async function generate(
   // Fail on a bad --exact-size or a missing sharp BEFORE anything is spent. Both
   // checks are free and deterministic; discovering them after generation costs the
   // user quota for an image they never receive.
-  await preflightExactSize(request.exactSize);
+  await preflightPostProcessing(request);
 
-  const key = cacheKey(request);
+  // Ordering matters. The key is built from reference CONTENT, so the files must be
+  // read first. Reading them after a cache lookup would mean a hit was decided
+  // against a hash of something we had not looked at yet.
+  const references = await loadReferences(request.referenceImages);
+  const resolved: ResolvedRequest = {
+    ...request,
+    resolvedReferences: references.length > 0 ? references : undefined,
+    referenceHashes: references.map((reference) => reference.sha256),
+  };
+
+  const key = cacheKey(resolved);
   const count = Math.max(1, request.n ?? 1);
 
   // Serialise identical concurrent requests ACROSS PROCESSES. Without this, two
@@ -152,19 +346,19 @@ export async function generate(
   // Unrelated prompts still run in parallel, which is all the granularity buys.
   if (count === 1 && !deps.noCache) {
     return withFileLock(
-      join(deps.stateDir, "locks", `${rawCacheKey(request)}.lock`),
-      (lock) => runGeneration(request, deps, key, count, lock),
+      join(deps.stateDir, "locks", `${rawCacheKey(resolved)}.lock`),
+      (lock) => runGeneration(resolved, deps, key, count, lock),
       {
         // Long enough to cover a full generation behind another process.
         timeoutMs: (deps.timeoutMs ?? DEFAULT_TIMEOUT_MS) + 60_000,
       },
     );
   }
-  return runGeneration(request, deps, key, count);
+  return runGeneration(resolved, deps, key, count);
 }
 
 async function runGeneration(
-  request: GenerateRequest,
+  request: ResolvedRequest,
   deps: GenerateDeps,
   key: string,
   count: number,
@@ -235,10 +429,13 @@ async function runGeneration(
   const finishFromCache = async (
     artifact: ImageArtifact,
     entry: CacheEntry,
+    bytes: Uint8Array,
   ): Promise<GenerateResult> => {
     const model = entry.model ?? UNKNOWN_CACHED_MODEL;
     const backend = entry.backend ?? "codex-http";
     const effectivePrompt = entry.effectivePrompt ?? request.prompt;
+    // Before the manifest, so the sidecar records the files that now exist.
+    await publishVariants(artifact, bytes, request, writeOptions, warnAlways);
     await writeManifest(artifact.path, {
       prompt: request.prompt,
       effectivePrompt,
@@ -250,6 +447,8 @@ async function runGeneration(
       sha256: artifact.sha256,
       bytes: artifact.bytes,
       format: artifact.format,
+      variants: artifact.variants,
+      skippedVariants: artifact.skippedVariants,
     });
     return {
       images: [artifact],
@@ -272,7 +471,8 @@ async function runGeneration(
       logger.debug(`Cache hit for ${key.slice(0, 12)}; no quota spent.`);
       // Materialise at THIS run's destination. A hit still has to produce the file
       // the caller asked for.
-      return finishFromCache(await materialiseFromCache(hit, destinationFor(0), writeOptions), hit.entry);
+      const materialised = await materialiseFromCache(hit, destinationFor(0), writeOptions);
+      return finishFromCache(await withDimensions(materialised, hit.data), hit.entry, hit.data);
     }
 
     // Second lookup, on the key the bytes were BANKED under. This is the recovery
@@ -280,19 +480,24 @@ async function runGeneration(
     // failed in `sharp`, in `mkdir`, or on a full disk. Without this lookup the
     // retry looks like a plain miss and buys the same picture again.
     //
-    // The two keys differ only when `--exact-size` is set, so this costs one extra
-    // `stat`-shaped miss on the common path and nothing at all otherwise.
+    // The raw key lives in its own namespace, so it can never equal `key` and the
+    // bank can never be served as a finished image. Every request may have local
+    // steps to re-apply, so the lookup is unconditional.
     const rawKey = rawCacheKey(request);
-    if (request.exactSize && rawKey !== key) {
-      const rawHit = await lookupCache(deps.stateDir, rawKey);
-      if (rawHit) {
-        logger.debug(`Raw-bytes hit for ${rawKey.slice(0, 12)}; resizing locally, no quota spent.`);
-        const bytes = await enforceExactSize(rawHit.data, request.exactSize);
-        const artifact = await writeImage(destinationFor(0), bytes, writeOptions);
-        // Index the resized result under the full key so the next run is a plain hit.
-        await storeCache(deps.stateDir, key, artifact, bytes, provenanceOf(rawHit.entry));
-        return finishFromCache(artifact, rawHit.entry);
-      }
+    const rawHit = await lookupCache(deps.stateDir, rawKey);
+    if (rawHit) {
+      logger.debug(`Raw-bytes hit for ${rawKey.slice(0, 12)}; re-processing locally, no quota spent.`);
+      // The SAME function the fresh path uses. A recovered image and a freshly
+      // generated one must be byte-identical, or the cache is lying about what it
+      // holds.
+      const bytes = await postProcess(rawHit.data, request, warnAlways);
+      const artifact = await withDimensions(
+        await writeImage(destinationFor(0), bytes, writeOptions),
+        bytes,
+      );
+      // Index the processed result under the full key so the next run is a plain hit.
+      await storeCache(deps.stateDir, key, artifact, bytes, provenanceOf(rawHit.entry));
+      return finishFromCache(artifact, rawHit.entry, bytes);
     }
   }
 
@@ -372,9 +577,13 @@ async function runGeneration(
       });
     }
 
-    const bytes = request.exactSize ? await enforceExactSize(raw, request.exactSize) : raw;
+    const bytes = await postProcess(raw, request, warnAlways);
 
-    const artifact = await writeImage(destinationFor(index), bytes, writeOptions);
+    const artifact = await withDimensions(
+      await writeImage(destinationFor(index), bytes, writeOptions),
+      bytes,
+    );
+    await publishVariants(artifact, bytes, request, writeOptions, warnAlways);
     await writeManifest(artifact.path, {
       prompt: request.prompt,
       effectivePrompt: result.effectivePrompt,
@@ -386,6 +595,8 @@ async function runGeneration(
       sha256: artifact.sha256,
       bytes: artifact.bytes,
       format: artifact.format,
+      variants: artifact.variants,
+      skippedVariants: artifact.skippedVariants,
     });
 
     // Only a single-image request has an unambiguous cache entry.

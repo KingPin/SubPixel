@@ -5,8 +5,14 @@ import { dirname, join } from "node:path";
 import { Command } from "commander";
 import { collectDoctorReport, formatDoctorReport } from "./doctor.js";
 import { collectModelReport, formatModelReport } from "./models.js";
+import { runEdit } from "./edit.js";
 import { runGenerate } from "./generate.js";
+import { runIcons } from "./icons.js";
+import { runSync } from "./sync.js";
 import { normalizeArgv } from "./options.js";
+import { collectStyleReport, formatStyleReport } from "./styles.js";
+import { loadConfig } from "../config/load.js";
+import { redact } from "../core/redact.js";
 
 async function packageVersion(): Promise<string> {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -14,7 +20,7 @@ async function packageVersion(): Promise<string> {
   return (JSON.parse(raw) as { version: string }).version;
 }
 
-export async function main(argv: string[] = process.argv): Promise<void> {
+export async function buildProgram(): Promise<Command> {
   const program = new Command();
 
   program
@@ -51,17 +57,53 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     });
 
   program
+    .command("styles")
+    .argument("[name]", "show only this style")
+    .description("List the named styles defined in the project config")
+    .option("--json", "emit a single JSON object on stdout")
+    .action(async (name: string | undefined, options: { json?: boolean }) => {
+      const { config } = await loadConfig();
+      const report = collectStyleReport(config, name);
+      // Redact at the BOUNDARY, both branches.
+      //
+      // Style text is user prose from a file that is checked into a repository, and
+      // `spx styles` is the one command whose entire job is to print it. The rule is
+      // not "redact reasons and error messages"; it is that nothing leaves this
+      // process unmasked. `redact()` is a string→string pass, and its mask contains
+      // no quote or backslash, so running it over the serialised JSON leaves a
+      // still-parseable document.
+      process.stdout.write(
+        redact(
+          options.json
+            ? `${JSON.stringify(report, null, 2)}\n`
+            : `${formatStyleReport(report)}\n`,
+        ),
+      );
+    });
+
+  program
     .command("generate")
     .argument("<prompt>", "what to draw")
     .description("Generate an image from a prompt")
     .option("--size <WxH>", "requested generation size, e.g. 1024x1536")
     .option("--quality <level>", "low | medium | high | auto")
     .option("--background <mode>", "transparent | opaque | auto")
-    .option("--format <fmt>", "png | jpeg | webp", "png")
+    .option("--format <fmt>", "png | jpeg | webp (default: the config, else png)")
     .option("--exact-size <WxH>", "post-process to exactly this size (requires sharp)")
+    .option(
+      "--transparent",
+      "generate against a key colour and remove it, giving a real alpha channel",
+    )
+    .option("--variants <widths>", "also write these widths, e.g. 400,800,1200")
     .option("--model <slug>", "pin a driver model")
+    .option("--style <name>", "apply a named style from the project config")
+    .option(
+      "--image <path>",
+      "reference image; repeat for several",
+      (value: string, previous: string[] = []) => [...previous, value],
+    )
     .option("-o, --out <path>", "write to this exact file")
-    .option("--out-dir <dir>", "directory for generated images", process.cwd())
+    .option("--out-dir <dir>", "directory for generated images (default: the config, else the working directory)")
     .option("-n <count>", "number of images", "1")
     .option("--json", "emit the result as JSON on stdout")
     .option("--emit <format>", "path | markdown | jsx | html", "path")
@@ -69,8 +111,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option("--overwrite", "replace an existing output file")
     .option("--no-overwrite", "write a -v2 sibling instead of replacing (the default)")
     .option("--timeout <seconds>", "whole-request budget, measured from the moment the request starts")
-    .option("--concurrency <n>", "maximum simultaneous requests", "2")
-    .option("-b, --backend <name>", "codex-http | codex-exec | api | auto", "auto")
+    .option("--concurrency <n>", "maximum simultaneous requests (default: the config, else 2)")
+    .option("-b, --backend <name>", "codex-http | codex-exec | api | auto (default: the config, else auto)")
     .option("--allow-paid", "permit the paid api backend (spends OpenAI credits)")
     .option("-f, --force", "shorthand for --no-cache --overwrite")
     .option("--dry-run", "print the resolved plan and exit without spending quota")
@@ -79,5 +121,68 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option("-q, --quiet", "errors only on stderr")
     .action(runGenerate);
 
-  await program.parseAsync(normalizeArgv(argv));
+  program
+    .command("sync")
+    .description("Generate the assets declared in assets.yml that are missing or out of date")
+    .option("-f, --file <path>", "path to the manifest")
+    .option("--force", "regenerate every asset, not only the drifted ones")
+    .option("--dry-run", "report what would be generated and exit without spending quota")
+    .option("--concurrency <n>", "maximum simultaneous requests")
+    .option("-b, --backend <name>", "codex-http | codex-exec | api | auto")
+    .option("--allow-paid", "permit the paid api backend (spends OpenAI credits)")
+    .option("--json", "emit the result as JSON on stdout")
+    .option("-v, --verbose", "verbose logging on stderr")
+    .option("-q, --quiet", "errors only on stderr")
+    .option("--check", "exit 6 if any asset is out of date; makes no network calls")
+    .action(runSync);
+
+  program
+    .command("icons")
+    .argument("<image>", "the source image, ideally square and at least 512 pixels")
+    .description("Build a favicon and PWA icon pack from an existing image")
+    .option("--out-dir <dir>", "where to write the pack", "icons")
+    .option("--overwrite", "replace an existing pack")
+    .option("--json", "emit a single JSON object on stdout")
+    .action(runIcons);
+
+  program
+    .command("edit")
+    .argument("<image>", "the image to edit")
+    .argument("<instruction>", "what to change")
+    .description("Edit an existing image")
+    .option("--size <WxH>", "requested generation size, e.g. 1024x1536")
+    .option("--quality <level>", "low | medium | high | auto")
+    .option("--background <mode>", "transparent | opaque | auto")
+    .option("--format <fmt>", "png | jpeg | webp (default: the config, else png)")
+    .option("--style <name>", "apply a named style from the project config")
+    .option("--exact-size <WxH>", "resize the result to exactly this size")
+    .option(
+      "--transparent",
+      "generate against a key colour and remove it, giving a real alpha channel",
+    )
+    .option("--variants <widths>", "also write these widths, e.g. 400,800,1200")
+    .option("-o, --out <path>", "write to this exact path")
+    .option("--out-dir <dir>", "directory for the result")
+    .option("--model <slug>", "pin the driver model")
+    .option("-b, --backend <name>", "codex-http | codex-exec | api | auto")
+    .option("--allow-paid", "permit the paid api backend (spends OpenAI credits)")
+    .option("--dry-run", "show what would be sent without generating")
+    .option("--no-cache", "ignore any cached result")
+    .option("--overwrite", "replace an existing file at the output path")
+    .option("--no-overwrite", "write a -v2 sibling instead of replacing (the default)")
+    .option("-f, --force", "shorthand for --no-cache --overwrite")
+    .option("--timeout <seconds>", "whole-request budget, measured from the moment the request starts")
+    .option("--stall-timeout <sec>", "give up after this many seconds with no stream activity")
+    .option("--concurrency <n>", "maximum simultaneous requests (default: the config, else 2)")
+    .option("--json", "emit a single JSON object on stdout")
+    .option("--emit <format>", "path | markdown | jsx | html", "path")
+    .option("-v, --verbose", "verbose logging on stderr")
+    .option("-q, --quiet", "errors only on stderr")
+    .action(runEdit);
+
+  return program;
+}
+
+export async function main(argv: string[] = process.argv): Promise<void> {
+  await (await buildProgram()).parseAsync(normalizeArgv(argv));
 }

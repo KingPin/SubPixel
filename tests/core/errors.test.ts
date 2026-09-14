@@ -4,8 +4,10 @@ import {
   BackendUnavailable,
   ConfigError,
   ContentBlocked,
+  DriftDetected,
   ModelRejected,
   ModelUnavailable,
+  OutputError,
   RateLimited,
   StreamAborted,
   SubmissionUncertain,
@@ -193,5 +195,37 @@ describe("error taxonomy", () => {
   it("is an instance of SubpixelError", () => {
     expect(new RateLimited("x")).toBeInstanceOf(SubpixelError);
     expect(new SubmissionUncertain("x")).toBeInstanceOf(SubpixelError);
+  });
+});
+
+describe("exit codes", () => {
+  it("matches the spec table", () => {
+    expect(new ConfigError("x").exitCode).toBe(2);
+    expect(new AuthExpired("x").exitCode).toBe(3);
+    expect(new RateLimited("x").exitCode).toBe(4);
+    expect(new BackendUnavailable("x").exitCode).toBe(5);
+    expect(new DriftDetected("x").exitCode).toBe(6);
+  });
+
+  it("uses 1 for everything that was already submitted or is otherwise ordinary", () => {
+    expect(new ContentBlocked("x").exitCode).toBe(1);
+    expect(new ModelRejected("x").exitCode).toBe(1);
+    expect(new ModelUnavailable("x").exitCode).toBe(1);
+    expect(new StreamAborted("x").exitCode).toBe(1);
+    expect(new SubmissionUncertain("x").exitCode).toBe(1);
+    expect(new OutputError("x").exitCode).toBe(1);
+  });
+
+  it("keeps RateLimited distinct from its BackendUnavailable parent", () => {
+    const limited = new RateLimited("x");
+    expect(limited).toBeInstanceOf(BackendUnavailable);
+    expect(limited.exitCode).toBe(4);
+    expect(limited.canFallback).toBe(false);
+  });
+
+  it("treats drift as a pre-submit configuration fact, not a backend failure", () => {
+    const drift = new DriftDetected("2 assets are out of date");
+    expect(drift.submission).toBe("not-submitted");
+    expect(drift.canFallback).toBe(false);
   });
 });

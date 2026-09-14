@@ -40,6 +40,16 @@ export abstract class SubpixelError extends Error {
    */
   protected readonly fallbackUseful: boolean = true;
 
+  /**
+   * The process exit code for this failure, per the spec's taxonomy table.
+   *
+   * It lives on the error rather than in a switch in `bin.ts` because a switch has
+   * to be kept in step with the class hierarchy by hand, and the one that is
+   * forgotten is always the new subclass. A default of 1 means a new error class is
+   * merely uninformative rather than wrong.
+   */
+  readonly exitCode: number = 1;
+
   constructor(message: string, readonly cause?: unknown) {
     super(message);
     this.name = new.target.name;
@@ -59,6 +69,7 @@ export abstract class SubpixelError extends Error {
 export class BackendUnavailable extends SubpixelError {
   readonly code: string = "BACKEND_UNAVAILABLE";
   readonly submission: Submission = "not-submitted";
+  override readonly exitCode: number = 5;
 }
 
 /**
@@ -76,6 +87,7 @@ export class SubmissionUncertain extends SubpixelError {
 export class AuthExpired extends SubpixelError {
   readonly code: string = "AUTH_EXPIRED";
   readonly submission: Submission = "not-submitted";
+  override readonly exitCode: number = 3;
 }
 
 /**
@@ -89,6 +101,7 @@ export class AuthExpired extends SubpixelError {
 export class RateLimited extends BackendUnavailable {
   override readonly code: string = "RATE_LIMITED";
   protected override readonly fallbackUseful: boolean = false;
+  override readonly exitCode: number = 4;
   constructor(message: string, readonly resetsAt?: string, cause?: unknown) {
     super(message, cause);
   }
@@ -142,6 +155,22 @@ export class ConfigError extends SubpixelError {
   readonly code: string = "CONFIG_ERROR";
   readonly submission: Submission = "not-submitted";
   protected override readonly fallbackUseful: boolean = false;
+  override readonly exitCode: number = 2;
+}
+
+/**
+ * `spx sync --check` found that the generated assets do not match `assets.yml`.
+ *
+ * This is not a failure of the tool. It is the tool's ANSWER, delivered as an exit
+ * code so a CI job can gate on it, in the same way `git diff --exit-code` reports a
+ * difference. Nothing was submitted and nothing was spent; `--check` never touches
+ * the network.
+ */
+export class DriftDetected extends SubpixelError {
+  readonly code: string = "DRIFT_DETECTED";
+  readonly submission: Submission = "not-submitted";
+  protected override readonly fallbackUseful: boolean = false;
+  override readonly exitCode: number = 6;
 }
 
 /**

@@ -3,6 +3,64 @@ export type ImageBackground = "transparent" | "opaque" | "auto";
 export type ImageFormat = "png" | "jpeg" | "webp";
 export type BackendName = "codex-http" | "codex-exec" | "api";
 
+/**
+ * One named style.
+ *
+ * The descriptive field names are taken from OpenAI's own imagegen skill —
+ * subject, scene, style, composition, lighting, palette, materials, text,
+ * constraints, negative — because that is the structure the backend was tuned on.
+ * The four generation fields at the end are defaults the style implies; a CLI flag
+ * still beats them.
+ */
+export interface StyleDefinition {
+  subject?: string;
+  scene?: string;
+  style?: string;
+  composition?: string;
+  lighting?: string;
+  palette?: string;
+  materials?: string;
+  text?: string;
+  constraints?: string;
+  negative?: string;
+  modifiers?: string;
+  size?: string;
+  quality?: ImageQuality;
+  background?: ImageBackground;
+  format?: ImageFormat;
+}
+
+export const STYLE_TEXT_FIELDS = [
+  "subject",
+  "scene",
+  "style",
+  "composition",
+  "lighting",
+  "palette",
+  "materials",
+  "text",
+  "constraints",
+  "modifiers",
+  "negative",
+] as const;
+
+/**
+ * A reference image after it has been read off disk.
+ *
+ * The type lives in core rather than in `engine/references.ts` so that a request
+ * can name it without core importing the engine. The loader owns the behaviour.
+ */
+export interface LoadedReference {
+  /** The path the user gave. Kept for messages only; never sent to the backend. */
+  path: string;
+  format: ImageFormat;
+  bytes: number;
+  /** sha256 of the FILE CONTENTS. This is what the cache key is built from. */
+  sha256: string;
+  /** `data:<media type>;base64,<payload>` — what actually goes on the wire. */
+  dataUrl: string;
+}
+
 export interface GenerateRequest {
   prompt: string;
   /** Requested generation size, e.g. "1024x1536". Advisory to the server. */
@@ -18,8 +76,51 @@ export interface GenerateRequest {
   /** Explicit output file path. When absent, the engine derives one. */
   outputPath?: string;
   format?: ImageFormat;
-  /** Reference images for an edit. Empty for a pure generation. */
+  /** Reference images for an edit, as paths the user typed. Empty for a pure generation. */
+  /**
+   * Generate against a flat key colour and remove it locally. This is stronger than
+   * `background: "transparent"`, which the image tool treats as a hint.
+   */
+  transparent?: boolean;
+  /**
+   * Extra widths to write beside the primary image. Post-processing only: this
+   * never reaches a backend and never changes the cache key, so adding a width to
+   * an existing project costs nothing but a resize.
+   */
+  variants?: VariantSpec[];
   referenceImages?: string[];
+  /**
+   * The same references, read and encoded. The engine fills this in; callers never
+   * set it. Providers read this and MUST NOT read `referenceImages` — a bare
+   * filesystem path in a request body is a path the backend cannot open.
+   */
+  resolvedReferences?: LoadedReference[];
+  /**
+   * A resolved style. The engine never looks a style up by name — the CLI does that
+   * against the project config and hands the definition down. That is what keeps
+   * every engine test free of a config file.
+   */
+  style?: StyleDefinition;
+}
+
+/**
+ * One requested variant width, and optionally the name it publishes under.
+ *
+ * Declared here rather than in `src/engine/variants.ts` for the same reason
+ * `LoadedReference` is: `GenerateRequest` carries it, and core must not import the
+ * engine. `variants.ts` re-exports it so engine callers have one import.
+ */
+export interface VariantSpec {
+  width: number;
+  suffix?: string;
+}
+
+/** A variant that was actually written. */
+export interface VariantRecord {
+  width: number;
+  height: number;
+  path: string;
+  bytes: number;
 }
 
 export interface ImageArtifact {
@@ -41,6 +142,18 @@ export interface ImageArtifact {
    * instead. Callers print it so the user is never silently redirected.
    */
   siblingOf?: string;
+  /** Resized copies written beside this image, ascending by width. */
+  variants?: VariantRecord[];
+  /**
+   * Declared widths that were NOT written because they exceed the source.
+   *
+   * Recorded rather than merely warned about. `spx sync --check` compares the
+   * declared variant list against the files on disk; without this list a width the
+   * engine deliberately refused to upscale looks exactly like a width that failed
+   * to write, so the asset reports drift on every run and no amount of re-syncing
+   * ever clears it.
+   */
+  skippedVariants?: number[];
 }
 
 /** One image in a batch that did not make it. */

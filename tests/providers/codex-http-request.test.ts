@@ -68,15 +68,29 @@ describe("buildBody", () => {
     expect(body.tool_choice).toEqual({ type: "image_generation" });
   });
 
-  it("attaches reference images as input_image parts", () => {
+  it("attaches reference images as input_image parts, encoded, never as a path", () => {
     const body = buildBody(
-      { prompt: "edit this", referenceImages: ["data:image/png;base64,AAAA"] },
-      "m",
+      {
+        prompt: "edit this",
+        resolvedReferences: [
+          {
+            path: "/tmp/logo.png",
+            format: "png",
+            bytes: 4,
+            sha256: "a".repeat(64),
+            dataUrl: "data:image/png;base64,AAAA",
+          },
+        ],
+      },
+      "gpt-5",
       "edit this",
     );
     const parts = (body.input[0] as { content: Array<Record<string, string>> }).content;
-    expect(parts.some((p) => p.type === "input_image")).toBe(true);
+    expect(parts[1]).toEqual({ type: "input_image", image_url: "data:image/png;base64,AAAA" });
     expect(parts.some((p) => p.type === "input_text")).toBe(true);
+    // The assertion that matters: it fails the day someone reintroduces a bare
+    // filesystem path into a body the backend has no way to open.
+    expect(JSON.stringify(body)).not.toContain("/tmp/logo.png");
   });
 
   it("sends no image parts for a plain generation", () => {

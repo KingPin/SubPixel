@@ -5,7 +5,6 @@ import { ConfigError, OutputError } from "../core/errors.js";
 import { atomicPublish } from "../core/fsx.js";
 import { redact } from "../core/redact.js";
 import type { ImageArtifact, ImageFormat } from "../core/types.js";
-import { parseSize } from "./prompt.js";
 
 export function sha256(data: Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
@@ -248,75 +247,4 @@ export async function writeImage(
   }
 }
 
-/**
- * Crop and resize to exactly the requested pixel dimensions.
- *
- * This is the "enforce" layer of the size policy. The backend honours the
- * requested size only approximately, so a caller that needs a precise asset —
- * an app icon, an OG card — opts into a deterministic local resize.
- */
-export async function enforceExactSize(data: Uint8Array, exactSize: string): Promise<Buffer> {
-  const { width, height } = parseSize(exactSize);
-  const sharp = await loadSharp();
-
-  return sharp(Buffer.from(data))
-    .resize(width, height, { fit: "cover", position: "attention" })
-    .toBuffer();
-}
-
-/**
- * Only the corner of `sharp` that `--exact-size` uses.
- *
- * `sharp` is an OPTIONAL peer dependency, so `npm ci` does not install it and its
- * types are not on disk in a clean checkout. A `typeof import("sharp")` annotation
- * would therefore make the optional dependency mandatory at build time, which is
- * exactly what optional is supposed to avoid.
- */
-type SharpFactory = (input: Buffer) => {
-  resize(
-    width: number,
-    height: number,
-    options: { fit: "cover"; position: "attention" },
-  ): { toBuffer(): Promise<Buffer> };
-};
-
-async function loadSharp(): Promise<SharpFactory> {
-  try {
-    // The specifier is held in a variable so the compiler does not try to resolve a
-    // package that is legitimately absent. Resolution failure belongs at runtime,
-    // where the catch below turns it into an actionable ConfigError.
-    const specifier = "sharp";
-    const mod: unknown = await import(specifier);
-    const factory = (mod as { default?: unknown }).default ?? mod;
-    if (typeof factory !== "function") throw new TypeError("sharp did not export a function");
-    return factory as SharpFactory;
-  } catch {
-    throw new ConfigError(
-      "--exact-size needs the optional sharp dependency. Install it with `npm i sharp`.",
-    );
-  }
-}
-
-/** Is the optional `sharp` dependency installed? Used by `spx doctor`. */
-export async function sharpAvailable(): Promise<boolean> {
-  try {
-    await loadSharp();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Check everything `--exact-size` needs BEFORE any provider call.
- *
- * Discovering a typo in `--exact-size`, or a missing `sharp`, after the image has
- * already been generated costs the user a unit of subscription quota for an image
- * they never receive. Both checks are free and both are deterministic, so the
- * orchestrator runs this first and fails fast.
- */
-export async function preflightExactSize(exactSize: string | undefined): Promise<void> {
-  if (!exactSize) return;
-  parseSize(exactSize); // Throws ConfigError on a malformed value.
-  await loadSharp(); // Throws ConfigError naming `npm i sharp`.
-}
+export { enforceExactSize, preflightExactSize, sharpAvailable } from "./sharpx.js";

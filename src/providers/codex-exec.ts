@@ -14,6 +14,7 @@ import type { Deadline } from "../core/deadline.js";
 import type { Logger } from "../core/logger.js";
 import type { GenerateRequest } from "../core/types.js";
 import { augmentPrompt } from "../engine/prompt.js";
+import { sha256 } from "../engine/output.js";
 import { findOnPath } from "../core/fsx.js";
 import type { ProviderResult } from "./codex-http.js";
 
@@ -81,6 +82,8 @@ export interface CodexArgPaths {
   schemaPath: string;
   lastMessagePath: string;
   model?: string;
+  /** Absolute paths to reference files ALREADY COPIED INTO `workdir`. */
+  images?: string[];
 }
 
 export function buildCodexArgs(prompt: string, options: CodexArgPaths): string[] {
@@ -110,6 +113,11 @@ export function buildCodexArgs(prompt: string, options: CodexArgPaths): string[]
     "-o",
     options.lastMessagePath,
   ];
+  // The Task 1 capture confirmed this flag on the installed binary (codex-cli
+  // 0.154.0: `-i, --image <FILE>...`) and confirmed the model reads the pixels,
+  // so it is the primary carrier. The copy into the workdir and the prompt naming
+  // below are the belt to its braces.
+  for (const image of options.images ?? []) args.push("-i", image);
   if (options.model) args.push("-m", options.model);
   // Last: the prompt is argv, not shell input, so no quoting is required.
   args.push(prompt);
@@ -379,11 +387,48 @@ export async function generateViaCodexExec(
     await mkdir(workdir, { recursive: true });
     await writeFile(schemaPath, JSON.stringify(OUTPUT_SCHEMA), "utf8");
 
-    const args = buildCodexArgs(effectivePrompt, {
+    // The subprocess runs sandboxed with workspace-write inside this temp
+    // directory. A path outside it may not be readable, so the bytes are copied in
+    // rather than referenced where they sit. The extension comes from the SNIFFED
+    // format, because a .png that is really a JPEG would otherwise confuse the tool
+    // for no reason.
+    //
+    // `inputs/` is a SUBDIRECTORY, not the workdir root. The last-resort retrieval
+    // route scans this tree for the newest image, and a reference sitting loose in
+    // the root is a perfect candidate for it.
+    const inputsDir = join(workdir, "inputs");
+    const imagePaths: string[] = [];
+    const inputDigests = new Set<string>();
+    if (request.resolvedReferences && request.resolvedReferences.length > 0) {
+      await mkdir(inputsDir, { recursive: true });
+      for (const [index, reference] of request.resolvedReferences.entries()) {
+        const extension = reference.format === "jpeg" ? "jpg" : reference.format;
+        const copy = join(inputsDir, `reference-${index}.${extension}`);
+        const bytes = Buffer.from(reference.dataUrl.split(",", 2)[1] ?? "", "base64");
+        await writeFile(copy, bytes);
+        imagePaths.push(copy);
+        inputDigests.add(reference.sha256);
+      }
+    }
+
+    // Named in the prompt as well as passed as a flag. The flag is the stronger
+    // signal, but naming the files costs nothing and survives a binary that drops
+    // or renames the flag.
+    const promptWithReferences =
+      imagePaths.length === 0
+        ? effectivePrompt
+        : `${effectivePrompt}\n\n[Reference images]\nThe following files in the working ` +
+          `directory are reference images: ${imagePaths
+            .map((path) => relative(workdir, path))
+            .join(", ")}. Read them before drawing. Write your result somewhere else — ` +
+          "never overwrite or re-save a reference file.";
+
+    const args = buildCodexArgs(promptWithReferences, {
       workdir,
       schemaPath,
       lastMessagePath,
       model: options.model,
+      images: imagePaths,
     });
     // Recheck HERE, not only at entry. mkdtemp, mkdir and writeFile are three
     // awaits, and a budget that was alive on entry can be gone by the time the
@@ -408,7 +453,7 @@ export async function generateViaCodexExec(
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    const { images, paths, code, signal, stderr, error } = await collectFromChild(
+    const { images: inlineImages, paths, code, signal, stderr, error } = await collectFromChild(
       child,
       timeoutMs,
       options.deadline,
@@ -430,7 +475,7 @@ export async function generateViaCodexExec(
     // The workdir is realpath'd once. On macOS `os.tmpdir()` is a symlink into
     // /private/var, so an un-resolved root would reject every path inside it.
     const realWorkdir = await realpath(workdir);
-    const found = await retrieveImage(realWorkdir, lastMessagePath, paths, images);
+    const found = await retrieveImage(realWorkdir, lastMessagePath, paths, inlineImages, inputDigests);
 
     if (found) {
       if (error || signal || code !== 0) {
@@ -497,17 +542,32 @@ async function retrieveImage(
   lastMessagePath: string,
   eventPaths: readonly string[],
   inline: readonly Buffer[],
+  // Content digests of every file this process placed in the workdir. Empty for a
+  // request with no references, which is why the common path is unaffected.
+  inputDigests: ReadonlySet<string>,
 ): Promise<Buffer | undefined> {
+  // Applied to EVERY route, not only the scan. The structured routes read a path
+  // the model reported, and a model that was asked to edit an image is entirely
+  // capable of reporting the file it was given. Path-based exclusion alone would
+  // not catch a straight copy to `out.png`, so the test is on the bytes.
+  //
+  // Without this, a run that times out, is refused, or exits non-zero returns the
+  // user's own input reported as a successful generation — written to the output
+  // path, banked in the cache, and under `spx sync` committed as the asset.
+  const notAnInput = (data: Buffer | undefined): Buffer | undefined =>
+    data && !inputDigests.has(sha256(data)) ? data : undefined;
+
   for (const candidate of await pathsFromLastMessage(lastMessagePath)) {
-    const data = await readImageAt(realWorkdir, candidate);
+    const data = notAnInput(await readImageAt(realWorkdir, candidate));
     if (data) return data;
   }
   for (const candidate of eventPaths) {
-    const data = await readImageAt(realWorkdir, candidate);
+    const data = notAnInput(await readImageAt(realWorkdir, candidate));
     if (data) return data;
   }
-  if (inline[0]) return inline[0];
-  return scanForNewestImage(realWorkdir);
+  const first = notAnInput(inline[0]);
+  if (first) return first;
+  return scanForNewestImage(realWorkdir, inputDigests);
 }
 
 const MAX_SCAN_DEPTH = 6;
@@ -516,7 +576,10 @@ const MAX_SCAN_DEPTH = 6;
  * Walk the workdir and return the most recently modified image. A guess, used
  * only when every structured route has failed.
  */
-async function scanForNewestImage(root: string): Promise<Buffer | undefined> {
+async function scanForNewestImage(
+  root: string,
+  inputDigests: ReadonlySet<string>,
+): Promise<Buffer | undefined> {
   const candidates: Array<{ path: string; mtimeMs: number }> = [];
 
   async function walk(dir: string, depth: number): Promise<void> {
@@ -533,6 +596,8 @@ async function scanForNewestImage(root: string): Promise<Buffer | undefined> {
       // already the least trustworthy one.
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
+        // The one directory in here whose contents this process wrote.
+        if (depth === 0 && entry.name === "inputs") continue;
         await walk(full, depth + 1);
         continue;
       }
@@ -551,7 +616,8 @@ async function scanForNewestImage(root: string): Promise<Buffer | undefined> {
   for (const candidate of candidates) {
     try {
       const data = await readFile(candidate.path);
-      if (looksLikeImage(data)) return data;
+      // The directory skip above is the cheap guard; this is the correct one.
+      if (looksLikeImage(data) && !inputDigests.has(sha256(data))) return data;
     } catch {
       // Keep looking; an unreadable entry is not fatal here.
     }

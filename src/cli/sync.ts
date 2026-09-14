@@ -5,17 +5,17 @@ import { logLevelFor } from "./generate.js";
 import { createLogger } from "../core/logger.js";
 import { redact } from "../core/redact.js";
 import { ConfigError, DriftDetected } from "../core/errors.js";
+import { parseBackend, parseCount } from "./options.js";
 import { diskProbe, hasDrift, planAssets, type AssetProbe, type AssetStatus } from "../assets/plan.js";
 import type { ProviderFn } from "../engine/generate.js";
 import type { LoadedAssets } from "../assets/load.js";
-import type { BackendName } from "../core/types.js";
 
 export interface SyncOptions {
   file?: string;
   force?: boolean;
   dryRun?: boolean;
   concurrency?: string;
-  backend?: BackendName;
+  backend?: string;
   allowPaid?: boolean;
   json?: boolean;
   quiet?: boolean;
@@ -97,11 +97,17 @@ export async function runSync(options: SyncOptions): Promise<void> {
     return;
   }
 
+  const concurrency = parseCount(options.concurrency, "--concurrency");
+  const backend = parseBackend(options.backend);
+
   const outcome = await syncAssets(loaded, {
     force: options.force === true,
     dryRun: options.dryRun === true,
-    ...(options.concurrency ? { concurrency: Number(options.concurrency) } : {}),
-    ...(options.backend ? { backend: options.backend } : {}),
+    // Parsed with the same helpers `generate` uses, not read raw. `Number("1.5")`
+    // reaches the semaphore and admits two workers while `active < 1.5`, and the
+    // literal "auto" is a truthy string the runner registry has no entry for.
+    ...(concurrency !== undefined ? { concurrency } : {}),
+    ...(backend ? { backend } : {}),
     ...(options.allowPaid === true ? { allowPaid: true } : {}),
     // Same three-way rule `runGenerate` uses. `logLevelFor` takes only `quiet` and
     // `verbose`, so it reads `SyncOptions` without a cast.

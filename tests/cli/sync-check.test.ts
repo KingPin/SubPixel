@@ -145,3 +145,34 @@ describe("formatDriftReport", () => {
     expect(report).not.toContain("icon");
   });
 });
+
+describe("runSync option parsing", () => {
+  // Both of these reached `syncAssets` unvalidated: `Number("1.5")` admits two
+  // workers while `active < 1.5`, and "auto" is a truthy string no runner answers to.
+  it("refuses a fractional --concurrency", async () => {
+    await expect(
+      runSync({ file: await project(MANIFEST), concurrency: "1.5", provider: NEVER }),
+    ).rejects.toBeInstanceOf(ConfigError);
+    expect(NEVER).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unknown --backend", async () => {
+    await expect(
+      runSync({ file: await project(MANIFEST), backend: "nope", provider: NEVER }),
+    ).rejects.toBeInstanceOf(ConfigError);
+  });
+
+  it("treats --backend auto as the default chain, not as a named backend", async () => {
+    const seen: string[] = [];
+    await runSync({
+      file: await project(MANIFEST),
+      backend: "auto",
+      quiet: true,
+      provider: async (request) => {
+        seen.push(request.prompt);
+        return { images: [PNG], model: "gpt-5", effectivePrompt: request.prompt };
+      },
+    });
+    expect(seen).toHaveLength(2);
+  });
+});

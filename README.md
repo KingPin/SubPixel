@@ -8,7 +8,12 @@ content, so re-running the same prompt gives you the same file back instead of a
 bill. There's also `spx doctor` to tell you whether your credentials and optional
 dependencies are in order, and `spx models` to show which driver models it will try.
 
-Still early — the CLI works, the docs don't exist yet. This README will grow up later.
+Declare your images once in `assets.yml`, run `spx sync` to generate what changed, and
+put `spx sync --check` in CI — it exits 6 if the committed images have fallen behind the
+manifest, and it makes no network calls to find out.
+
+See [docs/reference/cli.md](docs/reference/cli.md) for every command, the exit codes, and
+the configuration file formats.
 
 ## License
 

@@ -20,7 +20,7 @@ async function packageVersion(): Promise<string> {
   return (JSON.parse(raw) as { version: string }).version;
 }
 
-export async function main(argv: string[] = process.argv): Promise<void> {
+export async function buildProgram(): Promise<Command> {
   const program = new Command();
 
   program
@@ -172,5 +172,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option("-q, --quiet", "errors only on stderr")
     .action(runEdit);
 
-  await program.parseAsync(normalizeArgv(argv));
+  return program;
+}
+
+export async function main(argv: string[] = process.argv): Promise<void> {
+  await (await buildProgram()).parseAsync(normalizeArgv(argv));
 }

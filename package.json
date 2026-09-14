@@ -4,13 +4,25 @@
   "description": "Image generation and editing for AI coding agents, powered by your existing ChatGPT/Codex subscription.",
   "license": "Apache-2.0",
   "author": "KingPin <28669+KingPin@users.noreply.github.com>",
-  "repository": { "type": "git", "url": "git+https://github.com/KingPin/subpixel.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KingPin/subpixel.git"
+  },
   "type": "module",
-  "engines": { "node": ">=20.0.0" },
-  "bin": { "spx": "dist/cli/bin.js", "subpixel": "dist/cli/bin.js" },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "bin": {
+    "spx": "dist/cli/bin.js",
+    "subpixel": "dist/cli/bin.js"
+  },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "postbuild": "chmod +x dist/cli/bin.js",
@@ -27,10 +39,13 @@
     "sharp": "^0.33.0"
   },
   "peerDependenciesMeta": {
-    "sharp": { "optional": true }
+    "sharp": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^20.16.0",
+    "sharp": "^0.35.4",
     "typescript": "^5.6.0",
     "vitest": "^2.1.0"
   }

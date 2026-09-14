@@ -17,6 +17,7 @@ import { generateViaCodexExec, hasCodexBinary } from "../providers/codex-exec.js
 import { resolveChain, runWithFallback } from "../providers/resolve.js";
 import { advancePast, resolveModel, type ResolvedModel } from "../providers/models.js";
 import { formatQuota, loadQuota, saveQuota, shouldWarn } from "../providers/quota.js";
+import { loadReferences } from "./references.js";
 import {
   cacheKey,
   lookupCache,
@@ -123,7 +124,16 @@ export async function callWithModelRecovery(
  * conversion (see `postProcess`), so the same backend bytes serve every requested
  * format.
  */
-export function rawCacheKey(request: GenerateRequest): string {
+/**
+ * A request with its references already read off disk.
+ *
+ * `generate()` builds one of these before it touches the cache, and everything
+ * downstream takes it in place of the bare request. The content digests travel with
+ * the request so that no call site can compute a key from paths by accident.
+ */
+export type ResolvedRequest = GenerateRequest & { referenceHashes?: string[] };
+
+export function rawCacheKey(request: ResolvedRequest): string {
   return createHash("sha256")
     .update("raw\0")
     .update(cacheKey({ ...request, exactSize: undefined, format: undefined }))
@@ -220,7 +230,17 @@ export async function generate(
   // user quota for an image they never receive.
   await preflightPostProcessing(request);
 
-  const key = cacheKey(request);
+  // Ordering matters. The key is built from reference CONTENT, so the files must be
+  // read first. Reading them after a cache lookup would mean a hit was decided
+  // against a hash of something we had not looked at yet.
+  const references = await loadReferences(request.referenceImages);
+  const resolved: ResolvedRequest = {
+    ...request,
+    resolvedReferences: references.length > 0 ? references : undefined,
+    referenceHashes: references.map((reference) => reference.sha256),
+  };
+
+  const key = cacheKey(resolved);
   const count = Math.max(1, request.n ?? 1);
 
   // Serialise identical concurrent requests ACROSS PROCESSES. Without this, two
@@ -236,19 +256,19 @@ export async function generate(
   // Unrelated prompts still run in parallel, which is all the granularity buys.
   if (count === 1 && !deps.noCache) {
     return withFileLock(
-      join(deps.stateDir, "locks", `${rawCacheKey(request)}.lock`),
-      (lock) => runGeneration(request, deps, key, count, lock),
+      join(deps.stateDir, "locks", `${rawCacheKey(resolved)}.lock`),
+      (lock) => runGeneration(resolved, deps, key, count, lock),
       {
         // Long enough to cover a full generation behind another process.
         timeoutMs: (deps.timeoutMs ?? DEFAULT_TIMEOUT_MS) + 60_000,
       },
     );
   }
-  return runGeneration(request, deps, key, count);
+  return runGeneration(resolved, deps, key, count);
 }
 
 async function runGeneration(
-  request: GenerateRequest,
+  request: ResolvedRequest,
   deps: GenerateDeps,
   key: string,
   count: number,

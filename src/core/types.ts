@@ -44,6 +44,23 @@ export const STYLE_TEXT_FIELDS = [
   "negative",
 ] as const;
 
+/**
+ * A reference image after it has been read off disk.
+ *
+ * The type lives in core rather than in `engine/references.ts` so that a request
+ * can name it without core importing the engine. The loader owns the behaviour.
+ */
+export interface LoadedReference {
+  /** The path the user gave. Kept for messages only; never sent to the backend. */
+  path: string;
+  format: ImageFormat;
+  bytes: number;
+  /** sha256 of the FILE CONTENTS. This is what the cache key is built from. */
+  sha256: string;
+  /** `data:<media type>;base64,<payload>` — what actually goes on the wire. */
+  dataUrl: string;
+}
+
 export interface GenerateRequest {
   prompt: string;
   /** Requested generation size, e.g. "1024x1536". Advisory to the server. */
@@ -59,8 +76,14 @@ export interface GenerateRequest {
   /** Explicit output file path. When absent, the engine derives one. */
   outputPath?: string;
   format?: ImageFormat;
-  /** Reference images for an edit. Empty for a pure generation. */
+  /** Reference images for an edit, as paths the user typed. Empty for a pure generation. */
   referenceImages?: string[];
+  /**
+   * The same references, read and encoded. The engine fills this in; callers never
+   * set it. Providers read this and MUST NOT read `referenceImages` — a bare
+   * filesystem path in a request body is a path the backend cannot open.
+   */
+  resolvedReferences?: LoadedReference[];
   /**
    * A resolved style. The engine never looks a style up by name — the CLI does that
    * against the project config and hands the definition down. That is what keeps

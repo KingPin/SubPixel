@@ -47,10 +47,18 @@ describe("cacheKey", () => {
     expect(cacheKey({ ...BASE, background: "transparent" })).not.toBe(cacheKey(BASE));
   });
 
-  it("changes with reference images", () => {
-    expect(cacheKey({ ...BASE, referenceImages: ["data:image/png;base64,AAAA"] })).not.toBe(
-      cacheKey(BASE),
+  it("keys on reference content, not on the number of references", () => {
+    expect(cacheKey({ ...BASE, referenceHashes: ["aa"] })).not.toBe(cacheKey(BASE));
+  });
+
+  it("treats reference order as significant", () => {
+    expect(cacheKey({ ...BASE, referenceHashes: ["aa", "bb"] })).not.toBe(
+      cacheKey({ ...BASE, referenceHashes: ["bb", "aa"] }),
     );
+  });
+
+  it("leaves a reference-free key unchanged by the new field", () => {
+    expect(cacheKey({ ...BASE, referenceHashes: [] })).toBe(cacheKey(BASE));
   });
 
   it("returns a 64-character hex digest", () => {

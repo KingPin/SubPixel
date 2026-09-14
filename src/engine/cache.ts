@@ -15,19 +15,21 @@ import { writeImage, type WriteImageOptions } from "./output.js";
  * every cached image on the day that happens — costing the user real quota for
  * pictures they already have. The model is recorded in the manifest instead.
  */
-export function cacheKey(
-  request: Pick<
+export interface CacheKeyInput
+  extends Pick<
     GenerateRequest,
-    | "prompt"
-    | "size"
-    | "quality"
-    | "background"
-    | "format"
-    | "exactSize"
-    | "referenceImages"
-    | "style"
-  >,
-): string {
+    "prompt" | "size" | "quality" | "background" | "format" | "exactSize" | "style"
+  > {
+  /**
+   * sha256 of each reference image's CONTENTS, in the order the user gave them.
+   *
+   * Deliberately not the paths. A path says where a file was, not what was in it,
+   * and the cache exists to answer "have I drawn exactly this before".
+   */
+  referenceHashes?: string[];
+}
+
+export function cacheKey(request: CacheKeyInput): string {
   const hash = createHash("sha256");
   const part = (value: string | undefined) => hash.update(`${value ?? ""}\0`);
 
@@ -43,8 +45,8 @@ export function cacheKey(
   for (const field of STYLE_TEXT_FIELDS) {
     part(request.style?.[field]);
   }
-  for (const image of request.referenceImages ?? []) {
-    hash.update(createHash("sha256").update(image).digest("hex"));
+  for (const digest of request.referenceHashes ?? []) {
+    hash.update(digest);
     hash.update("\0");
   }
   return hash.digest("hex");

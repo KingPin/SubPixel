@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
@@ -75,6 +76,20 @@ describe("buildCodexArgs", () => {
     expect(flagValue(args, "-C")).toBe("/tmp/w");
     expect(args).toContain("-m");
     expect(args).toContain("gpt-5.6-sol");
+  });
+
+  it("passes each reference image after the fixed flags and before the prompt", () => {
+    const args = buildCodexArgs("draw", {
+      ...paths,
+      images: ["/tmp/w/inputs/reference-0.png", "/tmp/w/inputs/reference-1.jpeg"],
+    });
+    expect(args).toContain("-i");
+    expect(args.indexOf("/tmp/w/inputs/reference-0.png")).toBeLessThan(args.indexOf("draw"));
+    expect(args[args.length - 1]).toBe("draw");
+  });
+
+  it("adds nothing when there are no references", () => {
+    expect(buildCodexArgs("draw", paths)).not.toContain("-i");
   });
 
   it("passes the spec's isolation and cost flags", () => {
@@ -468,5 +483,74 @@ describe("generateViaCodexExec", () => {
     ).rejects.toBeInstanceOf(StreamAborted);
     expect(Date.now() - started).toBeLessThan(5_000);
     deadline.dispose();
+  });
+
+  // --- references: never hand an input back as the output -------------------
+
+  /**
+   * A resolved reference carrying PNG bytes, shaped exactly as `loadReferences`
+   * would return it. The digest has to match the bytes or the guard under test is
+   * testing nothing.
+   */
+  function tinyReference() {
+    return {
+      path: "/somewhere/photo.png",
+      format: "png" as const,
+      bytes: PNG.length,
+      sha256: createHash("sha256").update(PNG).digest("hex"),
+      dataUrl: `data:image/png;base64,${PNG_B64}`,
+    };
+  }
+
+  const editRequest = { prompt: "make the sky orange", resolvedReferences: [tinyReference()] };
+
+  it("copies each reference into work/inputs and names it in the prompt", async () => {
+    let seen: string[] = [];
+    let prompt = "";
+    const spawnFn = fakeSpawn([], 0, null, async (args) => {
+      const workdir = flagValue(args, "-C");
+      prompt = args[args.length - 1]!;
+      seen = await readdir(join(workdir, "inputs"));
+      await writeFile(join(workdir, "fox.png"), Buffer.concat([PNG, Buffer.from("new")]));
+      await writeFile(flagValue(args, "-o"), JSON.stringify({ images: [{ path: "fox.png" }] }));
+    });
+    await generateViaCodexExec(editRequest, { model: "m", spawnFn: spawnFn as never });
+    expect(seen).toEqual(["reference-0.png"]);
+    // Asserted on the argv, not on the returned `effectivePrompt`. The reference
+    // clause names paths inside a temp directory that no longer exists by the time
+    // anyone reads the manifest, so it is a transport detail of this backend and is
+    // deliberately kept out of the provenance the caller records.
+    expect(prompt).toContain("inputs/reference-0.png");
+  });
+
+  it("does not return a reference image when the run produced nothing", async () => {
+    // A child that exits non-zero having written no output, with a reference sitting
+    // in the workdir. The only image file present is the input.
+    await expect(
+      generateViaCodexExec(editRequest, { model: "m", spawnFn: fakeSpawn([], 1) as never }),
+    ).rejects.toBeInstanceOf(SubmissionUncertain);
+  });
+
+  it("does not return a reference the model merely copied to a new name", async () => {
+    // The bytes are what disqualify it, not the filename.
+    const spawnFn = fakeSpawn([], 0, null, async (args) => {
+      const workdir = flagValue(args, "-C");
+      await writeFile(join(workdir, "out.png"), PNG);
+      await writeFile(flagValue(args, "-o"), JSON.stringify({ images: [{ path: "out.png" }] }));
+    });
+    await expect(
+      generateViaCodexExec(editRequest, { model: "m", spawnFn: spawnFn as never }),
+    ).rejects.toBeInstanceOf(ContentBlocked);
+  });
+
+  it("removes the temporary tree, references included", async () => {
+    let workdir = "";
+    const spawnFn = fakeSpawn([], 0, null, async (args) => {
+      workdir = flagValue(args, "-C");
+    });
+    await expect(
+      generateViaCodexExec(editRequest, { model: "m", spawnFn: spawnFn as never }),
+    ).rejects.toBeInstanceOf(ContentBlocked);
+    await expect(stat(join(workdir, "inputs"))).rejects.toThrow();
   });
 });

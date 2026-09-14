@@ -1,7 +1,7 @@
 import { ConfigError } from "../core/errors.js";
 import type { BackendName } from "../core/types.js";
 
-export const KNOWN_COMMANDS = ["generate", "doctor", "models", "styles", "help"] as const;
+export const KNOWN_COMMANDS = ["generate", "doctor", "models", "styles", "edit", "help"] as const;
 
 const BACKENDS: BackendName[] = ["codex-http", "codex-exec", "api"];
 

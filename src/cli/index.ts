@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { Command } from "commander";
 import { collectDoctorReport, formatDoctorReport } from "./doctor.js";
 import { collectModelReport, formatModelReport } from "./models.js";
+import { runEdit } from "./edit.js";
 import { runGenerate } from "./generate.js";
 import { normalizeArgv } from "./options.js";
 import { collectStyleReport, formatStyleReport } from "./styles.js";
@@ -89,6 +90,11 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option("--exact-size <WxH>", "post-process to exactly this size (requires sharp)")
     .option("--model <slug>", "pin a driver model")
     .option("--style <name>", "apply a named style from the project config")
+    .option(
+      "--image <path>",
+      "reference image; repeat for several",
+      (value: string, previous: string[] = []) => [...previous, value],
+    )
     .option("-o, --out <path>", "write to this exact file")
     .option("--out-dir <dir>", "directory for generated images (default: the config, else the working directory)")
     .option("-n <count>", "number of images", "1")
@@ -107,6 +113,28 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option("-v, --verbose", "verbose logging on stderr")
     .option("-q, --quiet", "errors only on stderr")
     .action(runGenerate);
+
+  program
+    .command("edit")
+    .argument("<image>", "the image to edit")
+    .argument("<instruction>", "what to change")
+    .description("Edit an existing image")
+    .option("--size <WxH>", "requested generation size, e.g. 1024x1536")
+    .option("--quality <level>", "low | medium | high | auto")
+    .option("--format <fmt>", "png | jpeg | webp (default: the config, else png)")
+    .option("--style <name>", "apply a named style from the project config")
+    .option("--exact-size <WxH>", "resize the result to exactly this size")
+    .option("-o, --out <path>", "write to this exact path")
+    .option("--out-dir <dir>", "directory for the result")
+    .option("--model <slug>", "pin the driver model")
+    .option("-b, --backend <name>", "codex-http | codex-exec | api | auto")
+    .option("--dry-run", "show what would be sent without generating")
+    .option("--no-cache", "ignore any cached result")
+    .option("--overwrite", "replace an existing file at the output path")
+    .option("--json", "emit a single JSON object on stdout")
+    .option("-v, --verbose", "verbose logging on stderr")
+    .option("-q, --quiet", "errors only on stderr")
+    .action(runEdit);
 
   await program.parseAsync(normalizeArgv(argv));
 }

@@ -8,7 +8,9 @@ import type {
   ImageBackground,
   ImageFormat,
   ImageQuality,
+  StyleDefinition,
 } from "../core/types.js";
+import type { SubpixelConfig } from "../config/schema.js";
 import { cacheKey } from "../engine/cache.js";
 import { emit, type EmitFormat } from "../engine/emit.js";
 import { generate } from "../engine/generate.js";
@@ -19,7 +21,13 @@ import { resolveChain } from "../providers/resolve.js";
 import { parseBackend, parseCount, parseSeconds } from "./options.js";
 import { resolveStyle } from "./styles.js";
 
-export interface GenerateCliOptions {
+/**
+ * The flags `generate` and `edit` share.
+ *
+ * Declared once so the two commands cannot drift. Anything both commands accept
+ * belongs here, and anything here is resolved by `resolveSharedFields`.
+ */
+export interface SharedCliOptions {
   size?: string;
   quality?: ImageQuality;
   background?: ImageBackground;
@@ -30,9 +38,7 @@ export interface GenerateCliOptions {
   style?: string;
   out?: string;
   outDir?: string;
-  n?: string;
   json?: boolean;
-  emit?: EmitFormat;
   /**
    * Commander's `--no-cache` sets `cache: false`, NOT `noCache: true`. Naming the
    * field for the negated flag is a silent no-op, so the field is named `cache`.
@@ -54,9 +60,40 @@ export interface GenerateCliOptions {
   dryRun?: boolean;
   verbose?: boolean;
   quiet?: boolean;
+  /** Reference images, in the order the user gave them. */
+  image?: string[];
 }
 
-export function logLevelFor(options: GenerateCliOptions): LogLevel {
+/**
+ * Resolve every request field the CLI shares between `generate` and `edit`.
+ *
+ * Precedence is the spec's, and it is the same in both commands: flag > style >
+ * config > built-in. Anything added to a shared request belongs HERE — adding it to
+ * `runGenerate`'s literal alone is how `spx edit --transparent` ends up parsing the
+ * flag, printing no error, and producing an opaque image.
+ */
+export function resolveSharedFields(
+  options: SharedCliOptions,
+  style: StyleDefinition | undefined,
+  config: SubpixelConfig,
+): Omit<GenerateRequest, "prompt" | "outputPath"> {
+  return {
+    size: options.size ?? style?.size,
+    quality: options.quality ?? style?.quality,
+    background: options.background ?? style?.background,
+    format: options.format ?? style?.format ?? config.format,
+    exactSize: options.exactSize,
+    model: options.model,
+    style,
+  };
+}
+
+export interface GenerateCliOptions extends SharedCliOptions {
+  n?: string;
+  emit?: EmitFormat;
+}
+
+export function logLevelFor(options: SharedCliOptions): LogLevel {
   if (options.quiet) return "error";
   if (options.verbose) return "debug";
   return "info";
@@ -65,6 +102,31 @@ export function logLevelFor(options: GenerateCliOptions): LogLevel {
 export async function runGenerate(prompt: string, options: GenerateCliOptions): Promise<void> {
   const warn = (message: string) => process.stderr.write(`warning: ${message}\n`);
   const { config } = await loadConfig({ warn });
+  const style = resolveStyle(config, options.style ?? config.style);
+
+  const request: GenerateRequest = {
+    prompt,
+    outputPath: options.out ? resolve(options.out) : undefined,
+    n: parseCount(options.n, "-n"),
+    referenceImages: options.image,
+    ...resolveSharedFields(options, style, config),
+  };
+
+  await runGenerateRequest(request, { ...options, config });
+}
+
+/**
+ * Run an already-built request: budget, dry-run, generate, report.
+ *
+ * Shared by `generate` and `edit`. The two commands differ only in how the request
+ * is built; everything after that is identical, and a second copy of it is a second
+ * place for `--dry-run` or the budget check to go missing.
+ */
+export async function runGenerateRequest(
+  request: GenerateRequest,
+  options: GenerateCliOptions & { config: SubpixelConfig },
+): Promise<void> {
+  const { config } = options;
 
   // The precedence rule, in one place: a flag the user typed beats the project's
   // config, and the config beats the built-in default. Commander gives `--out-dir`
@@ -72,21 +134,6 @@ export async function runGenerate(prompt: string, options: GenerateCliOptions): 
   // the setting dead on arrival, so the default is declared here instead.
   const outDir = resolve(options.outDir ?? config.outDir ?? process.cwd());
   const stateDir = join(process.cwd(), ".subpixel");
-
-  const style = resolveStyle(config, options.style ?? config.style);
-
-  const request: GenerateRequest = {
-    prompt,
-    size: options.size ?? style?.size,
-    quality: options.quality ?? style?.quality,
-    background: options.background ?? style?.background,
-    format: options.format ?? style?.format ?? config.format,
-    exactSize: options.exactSize,
-    model: options.model,
-    outputPath: options.out ? resolve(options.out) : undefined,
-    n: parseCount(options.n, "-n"),
-    style,
-  };
 
   const backend = parseBackend(options.backend ?? config.backend);
   const allowPaid = options.allowPaid ?? config.allowPaid;
@@ -138,6 +185,7 @@ export async function runGenerate(prompt: string, options: GenerateCliOptions): 
           effectivePrompt: redact(augmentPrompt(request.prompt, request)),
           outDir,
           cacheKey: cacheKey(request),
+          ...(request.referenceImages && { referenceImages: request.referenceImages }),
           // Printed so --force can be verified without spending anything.
           noCache,
           overwrite,

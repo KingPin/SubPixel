@@ -112,7 +112,7 @@ export interface GenerateCliOptions extends SharedCliOptions {
   emit?: EmitFormat;
 }
 
-export function logLevelFor(options: SharedCliOptions): LogLevel {
+export function logLevelFor(options: { quiet?: boolean; verbose?: boolean }): LogLevel {
   if (options.quiet) return "error";
   if (options.verbose) return "debug";
   return "info";

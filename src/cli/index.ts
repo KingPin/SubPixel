@@ -8,6 +8,7 @@ import { collectModelReport, formatModelReport } from "./models.js";
 import { runEdit } from "./edit.js";
 import { runGenerate } from "./generate.js";
 import { runIcons } from "./icons.js";
+import { runSync } from "./sync.js";
 import { normalizeArgv } from "./options.js";
 import { collectStyleReport, formatStyleReport } from "./styles.js";
 import { loadConfig } from "../config/load.js";
@@ -119,6 +120,20 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option("-v, --verbose", "verbose logging on stderr")
     .option("-q, --quiet", "errors only on stderr")
     .action(runGenerate);
+
+  program
+    .command("sync")
+    .description("Generate the assets declared in assets.yml that are missing or out of date")
+    .option("-f, --file <path>", "path to the manifest")
+    .option("--force", "regenerate every asset, not only the drifted ones")
+    .option("--dry-run", "report what would be generated and exit without spending quota")
+    .option("--concurrency <n>", "maximum simultaneous requests")
+    .option("-b, --backend <name>", "codex-http | codex-exec | api | auto")
+    .option("--allow-paid", "permit the paid api backend (spends OpenAI credits)")
+    .option("--json", "emit the result as JSON on stdout")
+    .option("-v, --verbose", "verbose logging on stderr")
+    .option("-q, --quiet", "errors only on stderr")
+    .action(runSync);
 
   program
     .command("icons")

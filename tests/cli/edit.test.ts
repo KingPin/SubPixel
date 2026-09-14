@@ -124,7 +124,7 @@ describe("the edit command surface", () => {
     // reads `options.allowPaid`, commander never sets it, and `spx edit --allow-paid`
     // dies as an unknown option. These three are the deliberate exceptions: `edit`
     // makes one image from one positional source.
-    const generateOnly = new Set(["-n", "--emit", "--image"]);
+    const generateOnly = new Set(["-n", "--image"]);
     const missing = [...flags("generate")].filter(
       (flag) => !generateOnly.has(flag) && !flags("edit").has(flag),
     );

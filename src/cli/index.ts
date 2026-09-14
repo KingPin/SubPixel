@@ -175,6 +175,7 @@ export async function buildProgram(): Promise<Command> {
     .option("--stall-timeout <sec>", "give up after this many seconds with no stream activity")
     .option("--concurrency <n>", "maximum simultaneous requests (default: the config, else 2)")
     .option("--json", "emit a single JSON object on stdout")
+    .option("--emit <format>", "path | markdown | jsx | html", "path")
     .option("-v, --verbose", "verbose logging on stderr")
     .option("-q, --quiet", "errors only on stderr")
     .action(runEdit);

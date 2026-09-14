@@ -3,10 +3,13 @@ import { loadConfig } from "../config/load.js";
 import type { SubpixelConfig } from "../config/schema.js";
 import { ConfigError } from "../core/errors.js";
 import type { GenerateRequest, StyleDefinition } from "../core/types.js";
-import { resolveSharedFields, runGenerateRequest, type SharedCliOptions } from "./generate.js";
+import { resolveSharedFields, runGenerateRequest, type GenerateCliOptions } from "./generate.js";
 import { resolveStyle } from "./styles.js";
 
-export type EditCliOptions = SharedCliOptions;
+// Everything `generate` takes except the count: `edit` changes one image into one
+// image. `--image` is registered nowhere for `edit` either — the source is the
+// positional argument — but it costs nothing to carry the field.
+export type EditCliOptions = Omit<GenerateCliOptions, "n">;
 
 /**
  * `spx edit` is `spx generate` with one reference and a framing sentence.

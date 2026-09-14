@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -27,6 +27,15 @@ describe.runIf(hasSharp)("runIcons", () => {
       "favicon-32x32.png",
       "favicon.ico",
     ]);
+  });
+
+  it("writes nothing when a later destination already exists", async () => {
+    const { source, outDir } = await fixture();
+    await mkdir(outDir, { recursive: true });
+    // Last in the pack order, so the old behaviour wrote five PNGs before failing.
+    await writeFile(join(outDir, "favicon.ico"), "old");
+    await expect(runIcons(source, { outDir })).rejects.toThrow(/--overwrite/);
+    expect(await readdir(outDir)).toEqual(["favicon.ico"]);
   });
 
   it("emits one JSON object listing every path", async () => {

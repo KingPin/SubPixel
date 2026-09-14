@@ -1,7 +1,13 @@
 import { join, resolve } from "node:path";
 import { createLogger, type LogLevel } from "../core/logger.js";
 import { redact } from "../core/redact.js";
-import type { GenerateRequest, ImageBackground, ImageFormat, ImageQuality } from "../core/types.js";
+import type {
+  BackendName,
+  GenerateRequest,
+  ImageBackground,
+  ImageFormat,
+  ImageQuality,
+} from "../core/types.js";
 import { emit, type EmitFormat } from "../engine/emit.js";
 import { generate } from "../engine/generate.js";
 
@@ -29,6 +35,8 @@ export interface GenerateCliOptions {
   overwrite?: boolean;
   timeout?: string;
   concurrency?: string;
+  backend?: BackendName;
+  allowPaid?: boolean;
   verbose?: boolean;
   quiet?: boolean;
 }
@@ -62,6 +70,8 @@ export async function runGenerate(prompt: string, options: GenerateCliOptions): 
     overwrite: options.overwrite === true,
     timeoutMs: options.timeout ? Number(options.timeout) * 1000 : undefined,
     concurrency: options.concurrency ? Number(options.concurrency) : undefined,
+    backend: options.backend,
+    allowPaid: options.allowPaid,
     logger: createLogger({ level: logLevelFor(options) }),
     // Format mismatches and sibling redirects survive --quiet, per the spec's
     // "never lie about bytes" rule. They bypass the level-filtered logger.

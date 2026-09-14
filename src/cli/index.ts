@@ -69,6 +69,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option("--no-overwrite", "write a -v2 sibling instead of replacing (the default)")
     .option("--timeout <seconds>", "whole-request budget, measured from the moment the request starts")
     .option("--concurrency <n>", "maximum simultaneous requests", "2")
+    .option("--backend <name>", "codex-http | codex-exec | api")
+    .option("--allow-paid", "permit the paid api backend (spends OpenAI credits)")
     .option("-v, --verbose", "verbose logging on stderr")
     .option("-q, --quiet", "errors only on stderr")
     .action(runGenerate);

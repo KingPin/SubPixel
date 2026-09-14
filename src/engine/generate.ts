@@ -5,12 +5,15 @@ import { withFileLock, type LockHandle } from "../core/fsx.js";
 import { silentLogger, type Logger } from "../core/logger.js";
 import { redact } from "../core/redact.js";
 import type {
+  BackendName,
   BatchFailure,
   GenerateRequest,
   GenerateResult,
   ImageArtifact,
 } from "../core/types.js";
 import { generateViaCodexHttp, type ProviderResult } from "../providers/codex-http.js";
+import { generateViaCodexExec, hasCodexBinary } from "../providers/codex-exec.js";
+import { resolveChain, runWithFallback } from "../providers/resolve.js";
 import { advancePast, resolveModel, type ResolvedModel } from "../providers/models.js";
 import { formatQuota, loadQuota, saveQuota, shouldWarn } from "../providers/quota.js";
 import {
@@ -48,6 +51,8 @@ export interface GenerateDeps {
   timeoutMs?: number;
   /** How many images of an `-n` batch may be in flight at once. */
   concurrency?: number;
+  backend?: BackendName;
+  allowPaid?: boolean;
   provider?: ProviderFn;
   resolveModelFn?: (options: { override?: string }) => Promise<ResolvedModel>;
   /** Emitted to stderr even under `--quiet`, per the output contract. */
@@ -167,7 +172,28 @@ async function runGeneration(
   const startedAt = Date.now();
   const logger = deps.logger ?? silentLogger;
   const warnAlways = deps.warnAlways ?? ((message: string) => logger.warn(message));
-  const provider = deps.provider ?? ((req, opts) => generateViaCodexHttp(req, opts));
+  const provider: ProviderFn =
+    deps.provider ??
+    (async (req, opts) => {
+      const chain = resolveChain({
+        hasCodexBinary: await hasCodexBinary(),
+        requested: deps.backend,
+        allowPaid: deps.allowPaid,
+      });
+      const run = await runWithFallback(
+        chain,
+        {
+          // The deadline is forwarded, not recreated. It was started in the
+          // worker after the concurrency slot and the lock were taken, and it is
+          // what makes --timeout cover connect, headers and body.
+          "codex-http": (r) => generateViaCodexHttp(r, { model: opts.model, deadline: opts.deadline }),
+          "codex-exec": (r) => generateViaCodexExec(r, { model: opts.model, deadline: opts.deadline }),
+        },
+        logger,
+        req,
+      );
+      return run;
+    });
   const resolveFn = deps.resolveModelFn ?? ((options) => resolveModel(options));
 
   const destinationFor = (index: number): string =>

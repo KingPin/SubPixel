@@ -3,11 +3,28 @@ import { CHROMA_KEY_HEX } from "./chroma.js";
 import { STYLE_TEXT_FIELDS } from "../core/types.js";
 import type { GenerateRequest, ImageToolParams, StyleDefinition } from "../core/types.js";
 
-/** Marks text this module appended, so augmentation stays idempotent. */
+/** Heads the requirements text this module appends. */
 const MARKER = "\n\n[Image requirements]";
 
-/** Marks the style text this module appended, so composition stays idempotent. */
+/** Heads the style text this module appends. */
 const STYLE_MARKER = "\n\n[Style]";
+
+/**
+ * Append `block`, unless the text already carries that exact block.
+ *
+ * Matching the WHOLE block, not its marker. A marker alone is ordinary text a
+ * prompt may legitimately contain: `include the heading [Image requirements]`
+ * used to suppress the size, background and transparency instructions outright,
+ * so `--transparent` reached the backend with no magenta-key requirement and the
+ * chroma key had nothing to remove. `[Style]` did the same to a configured style,
+ * dropping its instructions while the style stayed in the cache key.
+ *
+ * A prompt that really does contain the entire generated block is the one case
+ * where skipping is the right answer anyway, which is what keeps this idempotent.
+ */
+function appendOnce(text: string, block: string): string {
+  return text.includes(block) ? text : `${text}${block}`;
+}
 
 /** The label printed for each field. `negative` is inverted on purpose. */
 const STYLE_LABELS: Record<(typeof STYLE_TEXT_FIELDS)[number], string> = {
@@ -90,12 +107,10 @@ export function augmentPrompt(
 ): string {
   let text = prompt;
 
-  if (request.style && !text.includes(STYLE_MARKER)) {
+  if (request.style) {
     const block = composeStyleBlock(request.style);
-    if (block) text = `${text}${STYLE_MARKER}\n${block}`;
+    if (block) text = appendOnce(text, `${STYLE_MARKER}\n${block}`);
   }
-
-  if (text.includes(MARKER)) return text;
 
   const requirements: string[] = [];
   if (request.size) {
@@ -121,7 +136,7 @@ export function augmentPrompt(
   }
 
   if (requirements.length === 0) return text;
-  return `${text}${MARKER}\n${requirements.map((line) => `- ${line}`).join("\n")}`;
+  return appendOnce(text, `${MARKER}\n${requirements.map((line) => `- ${line}`).join("\n")}`);
 }
 
 /**

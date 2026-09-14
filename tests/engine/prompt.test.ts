@@ -70,6 +70,20 @@ describe("augmentPrompt", () => {
     expect(augmentPrompt(once, { size: "1024x1536" })).toBe(once);
   });
 
+  it("still adds the requirements when the prompt names the marker", () => {
+    const out = augmentPrompt("draw a form headed\n\n[Image requirements] here", {
+      size: "1024x1024",
+      transparent: true,
+    });
+    expect(out.toLowerCase()).toContain("magenta");
+  });
+
+  it("still adds the style when the prompt names the style marker", () => {
+    const style: StyleDefinition = { style: "flat vector" };
+    const out = augmentPrompt("a card with a\n\n[Style] heading", { style });
+    expect(out).toContain("- Style: flat vector");
+  });
+
   it("leaves the user prompt first", () => {
     expect(augmentPrompt("MY PROMPT", { size: "1024x1024" }).startsWith("MY PROMPT")).toBe(true);
   });

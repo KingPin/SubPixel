@@ -64,7 +64,9 @@ idempotent.
 spx edit logo.png "put it on a dark navy background"
 ```
 
-Takes one or more source images and a prompt. Otherwise identical to `generate`.
+Takes exactly one source image and an instruction. Every `generate` flag applies,
+except `--image`, `--emit` and `-n`: the source is the positional argument, and
+`edit` writes one image.
 
 ## icons
 

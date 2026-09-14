@@ -1,46 +1,14 @@
 import { ConfigError } from "../core/errors.js";
+import { redact } from "../core/redact.js";
 import type { BackendName, ImageBackground, ImageFormat, ImageQuality } from "../core/types.js";
+import type { StyleDefinition } from "../core/types.js";
+import { STYLE_TEXT_FIELDS } from "../core/types.js";
 
-/**
- * One named style.
- *
- * The descriptive field names are taken from OpenAI's own imagegen skill —
- * subject, scene, style, composition, lighting, palette, materials, text,
- * constraints, negative — because that is the structure the backend was tuned on.
- * The four generation fields at the end are defaults the style implies; a CLI flag
- * still beats them.
- */
-export interface StyleDefinition {
-  subject?: string;
-  scene?: string;
-  style?: string;
-  composition?: string;
-  lighting?: string;
-  palette?: string;
-  materials?: string;
-  text?: string;
-  constraints?: string;
-  negative?: string;
-  modifiers?: string;
-  size?: string;
-  quality?: ImageQuality;
-  background?: ImageBackground;
-  format?: ImageFormat;
-}
-
-export const STYLE_TEXT_FIELDS = [
-  "subject",
-  "scene",
-  "style",
-  "composition",
-  "lighting",
-  "palette",
-  "materials",
-  "text",
-  "constraints",
-  "modifiers",
-  "negative",
-] as const;
+// Re-exported from their new home in core so config consumers do not all have to
+// move. The engine composes styles and must not import the config layer, so the
+// type itself lives in core/types.ts where both layers already depend on it.
+export type { StyleDefinition } from "../core/types.js";
+export { STYLE_TEXT_FIELDS } from "../core/types.js";
 
 export interface SubpixelConfig {
   outDir?: string;
@@ -148,7 +116,7 @@ export function validateConfig(
 
   for (const key of Object.keys(input)) {
     if (!(CONFIG_KEYS as readonly string[]).includes(key)) {
-      warn(`${source}: unknown key "${key}" ignored.`);
+      warn(redact(`${source}: unknown key "${key}" ignored.`));
     }
   }
 

@@ -3,6 +3,47 @@ export type ImageBackground = "transparent" | "opaque" | "auto";
 export type ImageFormat = "png" | "jpeg" | "webp";
 export type BackendName = "codex-http" | "codex-exec" | "api";
 
+/**
+ * One named style.
+ *
+ * The descriptive field names are taken from OpenAI's own imagegen skill —
+ * subject, scene, style, composition, lighting, palette, materials, text,
+ * constraints, negative — because that is the structure the backend was tuned on.
+ * The four generation fields at the end are defaults the style implies; a CLI flag
+ * still beats them.
+ */
+export interface StyleDefinition {
+  subject?: string;
+  scene?: string;
+  style?: string;
+  composition?: string;
+  lighting?: string;
+  palette?: string;
+  materials?: string;
+  text?: string;
+  constraints?: string;
+  negative?: string;
+  modifiers?: string;
+  size?: string;
+  quality?: ImageQuality;
+  background?: ImageBackground;
+  format?: ImageFormat;
+}
+
+export const STYLE_TEXT_FIELDS = [
+  "subject",
+  "scene",
+  "style",
+  "composition",
+  "lighting",
+  "palette",
+  "materials",
+  "text",
+  "constraints",
+  "modifiers",
+  "negative",
+] as const;
+
 export interface GenerateRequest {
   prompt: string;
   /** Requested generation size, e.g. "1024x1536". Advisory to the server. */
@@ -20,6 +61,12 @@ export interface GenerateRequest {
   format?: ImageFormat;
   /** Reference images for an edit. Empty for a pure generation. */
   referenceImages?: string[];
+  /**
+   * A resolved style. The engine never looks a style up by name — the CLI does that
+   * against the project config and hands the definition down. That is what keeps
+   * every engine test free of a config file.
+   */
+  style?: StyleDefinition;
 }
 
 export interface ImageArtifact {

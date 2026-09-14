@@ -17,6 +17,7 @@ import { hasCodexBinary } from "../providers/codex-exec.js";
 import { resolveModel } from "../providers/models.js";
 import { resolveChain } from "../providers/resolve.js";
 import { parseBackend, parseCount, parseSeconds } from "./options.js";
+import { resolveStyle } from "./styles.js";
 
 export interface GenerateCliOptions {
   size?: string;
@@ -25,6 +26,8 @@ export interface GenerateCliOptions {
   format?: ImageFormat;
   exactSize?: string;
   model?: string;
+  /** The named style to apply, from the project config. */
+  style?: string;
   out?: string;
   outDir?: string;
   n?: string;
@@ -70,16 +73,19 @@ export async function runGenerate(prompt: string, options: GenerateCliOptions): 
   const outDir = resolve(options.outDir ?? config.outDir ?? process.cwd());
   const stateDir = join(process.cwd(), ".subpixel");
 
+  const style = resolveStyle(config, options.style ?? config.style);
+
   const request: GenerateRequest = {
     prompt,
-    size: options.size,
-    quality: options.quality,
-    background: options.background,
-    format: options.format ?? config.format,
+    size: options.size ?? style?.size,
+    quality: options.quality ?? style?.quality,
+    background: options.background ?? style?.background,
+    format: options.format ?? style?.format ?? config.format,
     exactSize: options.exactSize,
     model: options.model,
     outputPath: options.out ? resolve(options.out) : undefined,
     n: parseCount(options.n, "-n"),
+    style,
   };
 
   const backend = parseBackend(options.backend ?? config.backend);

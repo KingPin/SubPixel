@@ -3,6 +3,7 @@ import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicPublish, atomicWrite } from "../core/fsx.js";
 import { redact } from "../core/redact.js";
+import { STYLE_TEXT_FIELDS } from "../core/types.js";
 import type { BackendName, GenerateRequest, ImageArtifact, ImageFormat } from "../core/types.js";
 import { writeImage, type WriteImageOptions } from "./output.js";
 
@@ -17,18 +18,31 @@ import { writeImage, type WriteImageOptions } from "./output.js";
 export function cacheKey(
   request: Pick<
     GenerateRequest,
-    "prompt" | "size" | "quality" | "background" | "format" | "exactSize" | "referenceImages"
+    | "prompt"
+    | "size"
+    | "quality"
+    | "background"
+    | "format"
+    | "exactSize"
+    | "referenceImages"
+    | "style"
   >,
 ): string {
   const hash = createHash("sha256");
-  const field = (value: string | undefined) => hash.update(`${value ?? ""}\0`);
+  const part = (value: string | undefined) => hash.update(`${value ?? ""}\0`);
 
-  field(request.prompt);
-  field(request.size);
-  field(request.quality);
-  field(request.background);
-  field(request.format ?? "png");
-  field(request.exactSize);
+  part(request.prompt);
+  part(request.size);
+  part(request.quality);
+  part(request.background);
+  part(request.format ?? "png");
+  part(request.exactSize);
+  // Style text goes into the key because it goes into the prompt. Editing a style
+  // in the config must invalidate every image that style produced; leaving it out
+  // would serve yesterday's look forever.
+  for (const field of STYLE_TEXT_FIELDS) {
+    part(request.style?.[field]);
+  }
   for (const image of request.referenceImages ?? []) {
     hash.update(createHash("sha256").update(image).digest("hex"));
     hash.update("\0");

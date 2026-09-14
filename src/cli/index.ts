@@ -7,6 +7,9 @@ import { collectDoctorReport, formatDoctorReport } from "./doctor.js";
 import { collectModelReport, formatModelReport } from "./models.js";
 import { runGenerate } from "./generate.js";
 import { normalizeArgv } from "./options.js";
+import { collectStyleReport, formatStyleReport } from "./styles.js";
+import { loadConfig } from "../config/load.js";
+import { redact } from "../core/redact.js";
 
 async function packageVersion(): Promise<string> {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -51,6 +54,31 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     });
 
   program
+    .command("styles")
+    .argument("[name]", "show only this style")
+    .description("List the named styles defined in the project config")
+    .option("--json", "emit a single JSON object on stdout")
+    .action(async (name: string | undefined, options: { json?: boolean }) => {
+      const { config } = await loadConfig();
+      const report = collectStyleReport(config, name);
+      // Redact at the BOUNDARY, both branches.
+      //
+      // Style text is user prose from a file that is checked into a repository, and
+      // `spx styles` is the one command whose entire job is to print it. The rule is
+      // not "redact reasons and error messages"; it is that nothing leaves this
+      // process unmasked. `redact()` is a string→string pass, and its mask contains
+      // no quote or backslash, so running it over the serialised JSON leaves a
+      // still-parseable document.
+      process.stdout.write(
+        redact(
+          options.json
+            ? `${JSON.stringify(report, null, 2)}\n`
+            : `${formatStyleReport(report)}\n`,
+        ),
+      );
+    });
+
+  program
     .command("generate")
     .argument("<prompt>", "what to draw")
     .description("Generate an image from a prompt")
@@ -60,6 +88,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option("--format <fmt>", "png | jpeg | webp (default: the config, else png)")
     .option("--exact-size <WxH>", "post-process to exactly this size (requires sharp)")
     .option("--model <slug>", "pin a driver model")
+    .option("--style <name>", "apply a named style from the project config")
     .option("-o, --out <path>", "write to this exact file")
     .option("--out-dir <dir>", "directory for generated images (default: the config, else the working directory)")
     .option("-n <count>", "number of images", "1")

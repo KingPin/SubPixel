@@ -3,9 +3,11 @@ import { ConfigError } from "../../src/core/errors.js";
 import {
   augmentPrompt,
   buildImageToolParams,
+  composeStyleBlock,
   describeAspect,
   parseSize,
 } from "../../src/engine/prompt.js";
+import type { StyleDefinition } from "../../src/core/types.js";
 
 describe("parseSize", () => {
   it("parses WxH", () => {
@@ -100,5 +102,54 @@ describe("buildImageToolParams", () => {
 
   it("honours an explicit output format", () => {
     expect(buildImageToolParams({ prompt: "x", format: "webp" }).output_format).toBe("webp");
+  });
+});
+
+describe("composeStyleBlock", () => {
+  it("returns an empty string for a style with no text", () => {
+    expect(composeStyleBlock({})).toBe("");
+    expect(composeStyleBlock({ size: "1024x1024", quality: "high" })).toBe("");
+  });
+
+  it("emits only the fields that are set, in a fixed order", () => {
+    const style: StyleDefinition = { palette: "deep navy", subject: "a single object" };
+    expect(composeStyleBlock(style)).toBe("- Subject: a single object\n- Palette: deep navy");
+  });
+
+  it("renders negative as an avoid line", () => {
+    expect(composeStyleBlock({ negative: "text, watermarks" })).toBe("- Avoid: text, watermarks");
+  });
+
+  it("keeps the order stable regardless of key order in the object", () => {
+    const a = composeStyleBlock({ lighting: "soft", subject: "a fox" });
+    const b = composeStyleBlock({ subject: "a fox", lighting: "soft" });
+    expect(a).toBe(b);
+  });
+});
+
+describe("augmentPrompt with a style", () => {
+  const style: StyleDefinition = { style: "flat vector", negative: "gradients" };
+
+  it("puts the style block before the image requirements", () => {
+    const result = augmentPrompt("a fox", { style, size: "1024x1024" });
+    expect(result.indexOf("[Style]")).toBeGreaterThan(result.indexOf("a fox"));
+    expect(result.indexOf("[Style]")).toBeLessThan(result.indexOf("[Image requirements]"));
+    expect(result).toContain("- Style: flat vector");
+    expect(result).toContain("- Avoid: gradients");
+  });
+
+  it("adds a style block with no size, quality, or background set", () => {
+    const result = augmentPrompt("a fox", { style });
+    expect(result).toContain("[Style]");
+    expect(result).not.toContain("[Image requirements]");
+  });
+
+  it("is idempotent", () => {
+    const once = augmentPrompt("a fox", { style, size: "1024x1024" });
+    expect(augmentPrompt(once, { style, size: "1024x1024" })).toBe(once);
+  });
+
+  it("adds nothing for a style that only carries generation defaults", () => {
+    expect(augmentPrompt("a fox", { style: { format: "webp" } })).toBe("a fox");
   });
 });

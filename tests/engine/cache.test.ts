@@ -228,3 +228,27 @@ describe("materialiseFromCache", () => {
     expect(await readFile(target, "utf8")).toBe("existing");
   });
 });
+
+describe("cacheKey with a style", () => {
+  const base = { prompt: "a fox", size: "1024x1024" } as const;
+
+  it("changes when a style text field changes", () => {
+    const a = cacheKey({ ...base, style: { palette: "navy" } });
+    const b = cacheKey({ ...base, style: { palette: "amber" } });
+    expect(a).not.toBe(b);
+  });
+
+  it("differs from the same prompt with no style", () => {
+    expect(cacheKey({ ...base, style: { palette: "navy" } })).not.toBe(cacheKey(base));
+  });
+
+  it("ignores key order inside the style", () => {
+    const a = cacheKey({ ...base, style: { palette: "navy", lighting: "soft" } });
+    const b = cacheKey({ ...base, style: { lighting: "soft", palette: "navy" } });
+    expect(a).toBe(b);
+  });
+
+  it("ignores generation defaults on the style, which reach the key as request fields", () => {
+    expect(cacheKey({ ...base, style: { size: "512x512" } })).toBe(cacheKey({ ...base, style: {} }));
+  });
+});

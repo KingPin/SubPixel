@@ -15,6 +15,7 @@ import { cacheKey } from "../engine/cache.js";
 import { emit, type EmitFormat } from "../engine/emit.js";
 import { generate } from "../engine/generate.js";
 import { augmentPrompt } from "../engine/prompt.js";
+import { loadReferences } from "../engine/references.js";
 import { hasCodexBinary } from "../providers/codex-exec.js";
 import { resolveModel } from "../providers/models.js";
 import { resolveChain } from "../providers/resolve.js";
@@ -195,28 +196,40 @@ export async function runGenerateRequest(
       requested: backend,
       allowPaid,
     });
+    // Read locally, exactly as `generate()` does before it builds the key. Without
+    // this the previewed key is a hash of a request with no reference digests in
+    // it, so a reference-based dry run prints a key that can never match the entry
+    // the real run looks up — and reports a clean plan for a missing reference.
+    // Local file reads only: --dry-run still makes no network call and writes nothing.
+    const references = await loadReferences(request.referenceImages);
+
+    // The WHOLE document, not just the prompt. `outDir` and every reference path is
+    // a string the user composed, and a credential pasted into one of them would
+    // otherwise go straight to stdout. Same rule as `emitSync`: redacting the
+    // serialised document redacts every field there will ever be.
     process.stdout.write(
-      `${JSON.stringify(
-        {
-          dryRun: true,
-          chain,
-          model: resolved.slug,
-          modelSource: resolved.source,
-          // --dry-run is the one path that prints the prompt verbatim, and it is
-          // the path people reach for when something looks wrong — often with the
-          // config that broke it pasted into the prompt. Same door as `alt` in
-          // `toJsonResult` and `effectivePrompt` in `storeCache`; same mask.
-          effectivePrompt: redact(augmentPrompt(request.prompt, request)),
-          outDir,
-          cacheKey: cacheKey(request),
-          ...(request.referenceImages && { referenceImages: request.referenceImages }),
-          // Printed so --force can be verified without spending anything.
-          noCache,
-          overwrite,
-        },
-        null,
-        2,
-      )}\n`,
+      redact(
+        `${JSON.stringify(
+          {
+            dryRun: true,
+            chain,
+            model: resolved.slug,
+            modelSource: resolved.source,
+            effectivePrompt: augmentPrompt(request.prompt, request),
+            outDir,
+            cacheKey: cacheKey({
+              ...request,
+              referenceHashes: references.map((reference) => reference.sha256),
+            }),
+            ...(request.referenceImages && { referenceImages: request.referenceImages }),
+            // Printed so --force can be verified without spending anything.
+            noCache,
+            overwrite,
+          },
+          null,
+          2,
+        )}\n`,
+      ),
     );
     return;
   }

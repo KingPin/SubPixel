@@ -9,6 +9,13 @@ vi.mock("../../src/engine/generate.js", () => ({ generate }));
 
 const { resolveSharedFields, runGenerate } = await import("../../src/cli/generate.js");
 const { loadConfig } = await import("../../src/config/load.js");
+const { cacheKey } = await import("../../src/engine/cache.js");
+const { sha256 } = await import("../../src/engine/output.js");
+
+const PNG_BYTES = Buffer.from(
+  "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c6360000002000100ffff03000006000557bfabd40000000049454e44ae426082",
+  "hex",
+);
 
 describe("spx generate --json", () => {
   it("reports a partial batch through the final CLI emitter", async () => {
@@ -75,6 +82,51 @@ describe("spx generate --json", () => {
     expect(text).not.toContain("abcdefghijklmnop");
     expect(JSON.parse(text).effectivePrompt).toContain("[REDACTED]");
     expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("redacts a credential in --out-dir, not only in the prompt", async () => {
+    const secret = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789";
+    generate.mockClear();
+    const out: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      out.push(String(chunk));
+      return true;
+    });
+    try {
+      await runGenerate("a fox", { dryRun: true, outDir: `/tmp/${secret}` });
+    } finally {
+      vi.restoreAllMocks();
+    }
+    const text = out.join("");
+    expect(text).not.toContain("sk-proj");
+    // Still one parseable JSON document after the mask.
+    expect(JSON.parse(text).dryRun).toBe(true);
+  });
+
+  it("previews the cache key the real run will look up, references included", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "subpixel-dryrun-"));
+    const reference = join(dir, "ref.png");
+    await writeFile(reference, PNG_BYTES);
+    generate.mockClear();
+    const out: string[] = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      out.push(String(chunk));
+      return true;
+    });
+    try {
+      await runGenerate("a fox", { dryRun: true, image: [reference] });
+    } finally {
+      vi.restoreAllMocks();
+    }
+    const previewed = JSON.parse(out.join("")).cacheKey as string;
+    const expected = cacheKey({ prompt: "a fox", referenceHashes: [sha256(PNG_BYTES)] });
+    expect(previewed).toBe(expected);
+  });
+
+  it("fails a dry run whose reference does not exist", async () => {
+    await expect(
+      runGenerate("a fox", { dryRun: true, image: ["/nope/missing.png"] }),
+    ).rejects.toThrow(/could not be read/);
   });
 
   it("rejects a malformed numeric flag before printing a dry-run plan", async () => {

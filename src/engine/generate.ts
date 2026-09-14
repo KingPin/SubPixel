@@ -220,6 +220,7 @@ async function runGeneration(
       format: request.format ?? "png",
       explicit: count === 1 ? request.outputPath : undefined,
       index,
+      key,
     });
 
   const writeOptions = {

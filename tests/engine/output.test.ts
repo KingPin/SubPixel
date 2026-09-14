@@ -90,6 +90,21 @@ describe("resolveOutputPath", () => {
     expect(dirname(path)).toBe(dir);
   });
 
+  it("derives the same name for the same request twice", () => {
+    // The idempotency the cache promises is worthless if the hit lands on a new
+    // filename: the output directory grows a duplicate per run and every CI build
+    // publishes a different URL for the same picture.
+    const a = resolveOutputPath({ outDir: dir, prompt: "a fox", format: "png", key: "k1" });
+    const b = resolveOutputPath({ outDir: dir, prompt: "a fox", format: "png", key: "k1" });
+    expect(a).toBe(b);
+  });
+
+  it("separates two requests that share a prompt", () => {
+    const a = resolveOutputPath({ outDir: dir, prompt: "a fox", format: "png", key: "k1" });
+    const b = resolveOutputPath({ outDir: dir, prompt: "a fox", format: "png", key: "k2" });
+    expect(a).not.toBe(b);
+  });
+
   it("gives distinct paths to successive images", () => {
     const a = resolveOutputPath({ outDir: dir, prompt: "same", format: "png", index: 0 });
     const b = resolveOutputPath({ outDir: dir, prompt: "same", format: "png", index: 1 });
@@ -172,6 +187,16 @@ describe("writeImage", () => {
     expect((await readFile(target)).length).toBe(PNG.length);
   });
 
+  it("reports the existing path when the file already holds these bytes", async () => {
+    const target = join(dir, "hero.png");
+    const first = await writeImage(target, PNG);
+    const warnings: string[] = [];
+    const again = await writeImage(target, PNG, { warn: (m) => warnings.push(m) });
+    expect(again.path).toBe(first.path);
+    expect(again.siblingOf).toBeUndefined();
+    expect(warnings).toEqual([]);
+  });
+
   it("writes a -v2 sibling instead of overwriting", async () => {
     const target = join(dir, "hero.png");
     await writeFile(target, "existing", "utf8");
@@ -221,10 +246,24 @@ describe("writeImage", () => {
   });
 
   it("lets one of two racing writers win and the other take a sibling", async () => {
+    // Different bytes: the loser must not clobber the winner, so it gets a sibling.
     const target = join(dir, "race.png");
-    const [a, b] = await Promise.all([writeImage(target, PNG), writeImage(target, PNG)]);
+    const [a, b] = await Promise.all([
+      writeImage(target, PNG),
+      writeImage(target, Buffer.concat([PNG, Buffer.from([0x01])])),
+    ]);
     expect(new Set([a.path, b.path]).size).toBe(2);
     expect([a.path, b.path]).toContain(target);
+    expect(await readFile(target)).toHaveLength(
+      a.path === target ? PNG.length : PNG.length + 1,
+    );
+  });
+
+  it("converges two racing writers of identical bytes on one file", async () => {
+    const target = join(dir, "same.png");
+    const [a, b] = await Promise.all([writeImage(target, PNG), writeImage(target, PNG)]);
+    expect(a.path).toBe(target);
+    expect(b.path).toBe(target);
   });
 });
 

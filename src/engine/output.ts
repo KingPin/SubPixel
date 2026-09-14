@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { ConfigError, OutputError } from "../core/errors.js";
 import { atomicPublish } from "../core/fsx.js";
@@ -57,6 +58,14 @@ export interface ResolveOutputPathOptions {
   explicit?: string;
   /** Index within a multi-image request, so images do not overwrite each other. */
   index?: number;
+  /**
+   * The canonical request hash. Naming from it is what makes a derived name
+   * STABLE: the same request run twice lands on the same file, so a cache hit
+   * re-materialises over its own bytes instead of littering the output directory
+   * with a fresh copy per run, and `spx sync` in CI is idempotent. Falls back to
+   * the prompt, which is the only identity a caller without a key has.
+   */
+  key?: string;
 }
 
 export function resolveOutputPath(options: ResolveOutputPathOptions): string {
@@ -64,7 +73,7 @@ export function resolveOutputPath(options: ResolveOutputPathOptions): string {
 
   const index = options.index ?? 0;
   const hash = createHash("sha256")
-    .update(`${options.prompt}\0${index}\0${Date.now()}`)
+    .update(`${options.key ?? options.prompt}\0${index}`)
     .digest("hex")
     .slice(0, 8);
 
@@ -146,6 +155,16 @@ export interface WriteImageOptions {
 
 const DEFAULT_MAX_SIBLINGS = 99;
 
+/** Whether `path` already holds exactly `data`. A missing or unreadable file is not. */
+async function sameBytes(path: string, data: Uint8Array): Promise<boolean> {
+  try {
+    const existing = await readFile(path);
+    return existing.length === data.length && sha256(existing) === sha256(data);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Write image bytes to disk without overwriting anything and without lying about
  * what the bytes are.
@@ -191,6 +210,23 @@ export async function writeImage(
       if (target !== intended) {
         warn(`${basename(intended)} exists. Wrote ${basename(target)} instead.`);
       }
+      return {
+        path: target,
+        bytes: data.length,
+        format,
+        sha256: sha256(data),
+        ...(options.requestedFormat && options.requestedFormat !== format
+          ? { requestedFormat: options.requestedFormat }
+          : {}),
+        ...(target !== intended ? { siblingOf: intended } : {}),
+      };
+    }
+    // The target exists. If it already holds exactly these bytes, this run is a
+    // re-run of one that already succeeded — writing `-v2` beside an identical
+    // file protects nothing and breaks idempotency. The no-clobber rule exists to
+    // stop DIFFERENT content replacing the user's file; identical content is not
+    // a collision.
+    if (await sameBytes(target, data)) {
       return {
         path: target,
         bytes: data.length,

@@ -74,6 +74,18 @@ describe("generate", () => {
     expect(second.cached).toBe(true);
   });
 
+  it("re-materialises a cache hit onto the same derived path", async () => {
+    // Without an --output the name is derived, and a derived name that moves per
+    // run makes the cache saving invisible: every repeat run leaves another
+    // identical copy in the output directory under a new name.
+    const provider = vi.fn(okProvider);
+    const first = await generate({ prompt: "a fox" }, deps(provider));
+    const again = await generate({ prompt: "a fox" }, deps(provider));
+    expect(again.cached).toBe(true);
+    expect(again.images[0]!.path).toBe(first.images[0]!.path);
+    expect((await readdir(dir)).filter((name) => name.endsWith(".png"))).toHaveLength(1);
+  });
+
   it("writes a manifest with real provenance beside a cache hit at a new destination", async () => {
     const provider = vi.fn(okProvider);
     await generate({ prompt: "a fox", outputPath: join(dir, "first.png") }, deps(provider));
@@ -98,8 +110,10 @@ describe("generate", () => {
     const provider = vi.fn(okProvider);
     const target = join(dir, "taken.png");
     await generate({ prompt: "a fox", outputPath: target }, deps(provider));
+    // Someone replaced the file with different content. Re-materialising the hit
+    // over it would destroy their bytes, so it has to take a sibling.
+    await writeFile(target, Buffer.concat([PNG, Buffer.from([0xff])]));
 
-    // Same prompt, same destination, no overwrite: writeImage picks a sibling.
     const hit = await generate({ prompt: "a fox", outputPath: target }, deps(provider));
     expect(hit.images[0]!.path).not.toBe(target);
     await expect(readFile(`${hit.images[0]!.path}.json`, "utf8")).resolves.toContain("model-a");

@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { parse } from "yaml";
 import { ConfigError } from "../core/errors.js";
 import { manifestPathFor } from "../engine/manifest.js";
+import { pathForFormat } from "../engine/output.js";
 import { variantPath } from "../engine/variants.js";
 import type { GenerateRequest, ImageFormat, StyleDefinition } from "../core/types.js";
 import { validateAssetsFile, type AssetSpec, type AssetsFile, type VariantSpec } from "./schema.js";
@@ -200,6 +201,17 @@ export async function loadAssets(
     const format = asset.format ?? file.defaults.format ?? style?.format ?? "png";
     const extension = format === "jpeg" ? "jpg" : format;
     const out = within(dir, asset.out ?? `${outDir}/${asset.id}.${extension}`);
+    // A declared `out` whose extension contradicts the format is refused, not
+    // quietly corrected. `writeImage` names the file after the BYTES, so
+    // `out: hero.png` with `format: webp` writes hero.webp while this record — and
+    // therefore the destination reservation and every `--check` run after it —
+    // keeps looking for hero.png, and the manifest reports stale forever.
+    if (asset.out !== undefined && pathForFormat(out, format) !== out) {
+      throw new ConfigError(
+        `assets.yml: asset "${asset.id}" declares out "${asset.out}", which does not ` +
+          `match format ${format}. Rename it, or drop the format.`,
+      );
+    }
     return {
       id: asset.id,
       out,

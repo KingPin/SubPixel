@@ -217,3 +217,28 @@ assets:
     await expect(loadAssets(path)).rejects.toBeInstanceOf(ConfigError);
   });
 });
+
+describe("loadAssets out extension", () => {
+  it("refuses an out whose extension contradicts the resolved format", async () => {
+    const path = await manifest(`
+assets:
+  - id: hero
+    prompt: a dashboard
+    format: webp
+    out: hero.png
+`);
+    await expect(loadAssets(path)).rejects.toBeInstanceOf(ConfigError);
+  });
+
+  it("accepts .jpg for a jpeg asset", async () => {
+    const path = await manifest(`
+assets:
+  - id: hero
+    prompt: a dashboard
+    format: jpeg
+    out: hero.jpg
+`);
+    const loaded = await loadAssets(path);
+    expect(loaded.assets[0]!.out.endsWith("hero.jpg")).toBe(true);
+  });
+});

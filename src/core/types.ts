@@ -71,7 +71,7 @@ export interface GenerateResult {
    * Optional until Task 18: before batching there is only the single-image shape
    * and `images.length` says everything. Task 18 makes it required.
    */
-  requested?: number;
+  requested: number;
   /**
    * Set when at least one image succeeded and at least one failed. A run in which
    * everything failed throws instead, so the caller sees the real cause.

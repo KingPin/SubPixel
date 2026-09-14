@@ -8,6 +8,7 @@ import {
   ModelRejected,
   ModelUnavailable,
 } from "../../src/core/errors.js";
+import { emit } from "../../src/engine/emit.js";
 import { generate } from "../../src/engine/generate.js";
 import { silentLogger } from "../../src/core/logger.js";
 
@@ -429,5 +430,92 @@ describe.runIf(sharpAvailable)("recovering banked raw bytes", () => {
     };
     expect(await sizeOf(small.images[0]!.path)).toBe("40x30");
     expect(await sizeOf(large.images[0]!.path)).toBe("80x60");
+  });
+  it("returns the images that succeeded when one of a batch fails", async () => {
+    let call = 0;
+    const result = await generate(
+      { prompt: "a cat", n: 3 },
+      deps(
+        async () => {
+          call += 1;
+          if (call === 2) throw new ContentBlocked("refused");
+          return { images: [PNG], model: "model-a", effectivePrompt: "a cat" };
+        },
+        { concurrency: 1 },
+      ),
+    );
+    expect(result.images).toHaveLength(1);
+    expect(result.requested).toBe(3);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures?.[0]?.kind).toBe("ContentBlocked");
+    // The third slot was skipped, not attempted. Quota is not spent after a failure.
+    expect(call).toBe(2);
+  });
+
+  it("redacts a secret echoed back in a failure message", async () => {
+    // The failure message travels to stdout as JSON and to stderr as prose. Neither
+    // goes through the logger, so `describeFailure` is the last place that can mask
+    // an upstream body that quoted our Authorization header back at us.
+    let call = 0;
+    const result = await generate(
+      { prompt: "a cat", n: 2 },
+      deps(
+        async () => {
+          if (call === 0) {
+            call += 1;
+            return { images: [PNG], model: "model-a", effectivePrompt: "a cat" };
+          }
+          throw new ContentBlocked(
+            "upstream rejected: Authorization: Bearer abc123def456ghi789jkl",
+          );
+        },
+        { concurrency: 1 },
+      ),
+    );
+    const message = result.failures![0]!.message;
+    expect(message).not.toContain("abc123def456");
+    expect(message).toContain("[REDACTED]");
+    // And it stays masked at the boundary the caller actually reads.
+    expect(emit(result, process.cwd(), "json")).not.toContain("abc123def456");
+  });
+
+  it("throws the original error when every image fails", async () => {
+    await expect(
+      generate(
+        { prompt: "a cat", n: 2 },
+        deps(
+          async () => {
+            throw new ContentBlocked("refused");
+          },
+          { concurrency: 1 },
+        ),
+      ),
+    ).rejects.toBeInstanceOf(ContentBlocked);
+  });
+
+  it("returns the image when the cache write fails after it was published", async () => {
+    // The cache is an optimisation; the image is the product. By the time
+    // `storeCache` runs, the file and its manifest are on disk, so an awaited throw
+    // here would lose an artifact the user has already paid for. This is reachable
+    // by configuration, not just by accident: cache blobs always publish with
+    // `overwrite: false`, which needs a hard link, so a state directory on a
+    // filesystem without them fails here on every run — and `--overwrite` does not
+    // help, because it applies to the image rather than to the blob.
+    // No mock: a regular file where the blob directory has to go makes every
+    // `atomicPublish` under it fail with ENOTDIR, which is the same shape as the
+    // hard-link failure this is about. `lookupCache` swallows read errors, so the
+    // run still starts as a clean miss.
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(join(stateDir, "blobs"), "");
+
+    const warn = vi.fn();
+    const result = await generate(
+      { prompt: "a fox" },
+      deps(okProvider, { overwrite: true, logger: { ...silentLogger, warn } }),
+    );
+
+    expect(result.images).toHaveLength(1);
+    await expect(readFile(result.images[0]!.path)).resolves.toHaveLength(PNG.length);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not be added to the cache"));
   });
 });

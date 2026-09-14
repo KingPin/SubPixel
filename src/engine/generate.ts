@@ -4,7 +4,12 @@ import { createDeadline, type Deadline } from "../core/deadline.js";
 import { withFileLock, type LockHandle } from "../core/fsx.js";
 import { silentLogger, type Logger } from "../core/logger.js";
 import { redact } from "../core/redact.js";
-import type { GenerateRequest, GenerateResult, ImageArtifact } from "../core/types.js";
+import type {
+  BatchFailure,
+  GenerateRequest,
+  GenerateResult,
+  ImageArtifact,
+} from "../core/types.js";
 import { generateViaCodexHttp, type ProviderResult } from "../providers/codex-http.js";
 import { advancePast, resolveModel, type ResolvedModel } from "../providers/models.js";
 import { formatQuota, loadQuota, saveQuota, shouldWarn } from "../providers/quota.js";
@@ -17,6 +22,7 @@ import {
   type CacheProvenance,
 } from "./cache.js";
 import { writeManifest } from "./manifest.js";
+import { mapWithConcurrency } from "./semaphore.js";
 import {
   enforceExactSize,
   preflightExactSize,
@@ -40,6 +46,8 @@ export interface GenerateDeps {
   overwrite?: boolean;
   /** Whole-request budget in milliseconds, started here, after the slot is held. */
   timeoutMs?: number;
+  /** How many images of an `-n` batch may be in flight at once. */
+  concurrency?: number;
   provider?: ProviderFn;
   resolveModelFn?: (options: { override?: string }) => Promise<ResolvedModel>;
   /** Emitted to stderr even under `--quiet`, per the output contract. */
@@ -260,14 +268,12 @@ async function runGeneration(
 
   const resolved = await resolveFn({ override: request.model });
 
-  const images: ImageArtifact[] = [];
-  let modelUsed = resolved.slug;
-  let effectivePrompt = request.prompt;
-
-  for (let index = 0; index < count; index += 1) {
+  const slots = Array.from({ length: count }, (_, index) => index);
+  const outcome = await mapWithConcurrency(slots, deps.concurrency ?? 2, async (index) => {
     // The budget starts HERE, not when the command was typed. The spec is explicit
-    // that the timeout begins after slot acquisition, and by this point the caller's
-    // concurrency slot and the per-key lock are both held.
+    // that the timeout begins after slot acquisition, and mapWithConcurrency calls
+    // this worker only once a permit is held. Each image gets its own deadline:
+    // one shared deadline would charge image four for images one through three.
     const deadline = createDeadline(deps.timeoutMs ?? DEFAULT_TIMEOUT_MS, { label: "generate" });
     deadline.start();
 
@@ -283,8 +289,10 @@ async function runGeneration(
     } finally {
       deadline.dispose();
     }
-    modelUsed = result.model;
-    effectivePrompt = result.effectivePrompt;
+    // Read off THIS worker's result, never off a shared variable. Task 20 puts a
+    // fallback chain behind `provider`, and a sibling worker that falls back to
+    // exec while this one is awaiting sharp would otherwise relabel this image.
+    const backend = result.backend ?? "codex-http";
 
     if (result.quota) {
       await saveQuota(join(deps.stateDir, "quota.json"), result.quota);
@@ -297,10 +305,6 @@ async function runGeneration(
     if (!raw) throw new OutputError("The backend returned no image data.");
 
     // Bank the paid bytes IMMEDIATELY, before any local step that can fail.
-    // Everything after this point — sharp, mkdir, the write itself — can throw on a
-    // full disk or a read-only directory, and without this the user has paid for an
-    // image that exists nowhere. Stored under the exactSize-free key so a re-run
-    // reuses it whatever `--exact-size` says next time.
 
     // `check()` rather than `assertHeld()`: the bytes are already paid for, so a
     // lost lock must never throw them away. It only means the shared bank belongs
@@ -319,9 +323,7 @@ async function runGeneration(
         rawCacheKey(request),
         { path: "", bytes: raw.length, format: "png", sha256: sha256(raw) },
         raw,
-        // Banked WITH its provenance. A later run that recovers these bytes has to
-        // write a truthful manifest, and by then this process is gone.
-        { model: modelUsed, backend: "codex-http", effectivePrompt },
+        { model: result.model, backend, effectivePrompt: result.effectivePrompt },
       ).catch((err: unknown) => {
         logger.debug(`Could not bank the raw bytes: ${String(err)}`);
       });
@@ -332,9 +334,9 @@ async function runGeneration(
     const artifact = await writeImage(destinationFor(index), bytes, writeOptions);
     await writeManifest(artifact.path, {
       prompt: request.prompt,
-      effectivePrompt,
-      model: modelUsed,
-      backend: "codex-http",
+      effectivePrompt: result.effectivePrompt,
+      model: result.model,
+      backend,
       size: request.size,
       exactSize: request.exactSize,
       cacheKey: key,
@@ -342,25 +344,75 @@ async function runGeneration(
       bytes: artifact.bytes,
       format: artifact.format,
     });
-    images.push(artifact);
 
     // Only a single-image request has an unambiguous cache entry.
+    //
+    // Best effort, exactly like the raw bank above, and for a stronger reason: by
+    // this line the image and its manifest are already on disk. An awaited throw
+    // here would reject the worker and a one-image run would never print the path
+    // to a file that exists — the caller loses an artifact they paid for because an
+    // optimisation failed. It is also reachable by configuration rather than by
+    // accident: cache blobs always publish with `overwrite: false`, which needs a
+    // hard link, so a state directory on a filesystem without them fails here on
+    // every single run. `--overwrite` does not help, because it applies to the
+    // image, not to the blob.
     if (count === 1 && mayPublish) {
       await storeCache(deps.stateDir, key, artifact, bytes, {
-        model: modelUsed,
-        backend: "codex-http",
-        effectivePrompt,
+        model: result.model,
+        backend,
+        effectivePrompt: result.effectivePrompt,
+      }).catch((err: unknown) => {
+        logger.warn(
+          `The image was written, but it could not be added to the cache ` +
+            `(${redact(err)}). The next identical request will regenerate it.`,
+        );
       });
     }
+
+    return { artifact, backend, model: result.model, effectivePrompt: result.effectivePrompt };
+  });
+
+  const produced = outcome.values;
+  if (produced.length === 0) {
+    // Nothing survived, so there is no partial result worth returning. Re-throw
+    // the original error rather than inventing a generic one — the caller needs
+    // to know whether this was ContentBlocked, a quota exhaustion, or a timeout.
+    throw outcome.failure ?? new OutputError("The backend returned no image data.");
   }
+
+  const failures = outcome.outcomes.flatMap((o) =>
+    o.status === "rejected" ? [describeFailure(o.index, o.reason)] : [],
+  );
+  for (const failure of failures) {
+    logger.warn(`Image ${failure.index + 1} of ${count} failed: ${failure.message}`);
+  }
+
+  const images: ImageArtifact[] = produced.map((p) => p.artifact);
+  const backendUsed = produced[0]?.backend ?? "codex-http";
+  const modelUsed = produced[0]?.model ?? resolved.slug;
+  const effectivePrompt = produced[0]?.effectivePrompt ?? request.prompt;
 
   return {
     images,
     requested: count,
-    backend: "codex-http",
+    ...(failures.length > 0 ? { failures } : {}),
+    backend: backendUsed,
     model: modelUsed,
     cached: false,
     effectivePrompt,
     elapsedMs: Date.now() - startedAt,
+  };
+}
+
+function describeFailure(index: number, reason: unknown): BatchFailure {
+  return {
+    index,
+    kind: reason instanceof Error ? reason.constructor.name : "Error",
+    // Redacted at the point the message stops being an exception and becomes data.
+    // From here it travels into `--json` on stdout and onto stderr, and neither of
+    // those goes through the logger, which is where redaction otherwise happens. An
+    // upstream error body that echoed an Authorization header would be published
+    // verbatim without this.
+    message: redact(reason instanceof Error ? reason.message : reason),
   };
 }

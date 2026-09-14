@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { atomicWrite } from "../core/fsx.js";
 import { redact } from "../core/redact.js";
-import type { BackendName, ImageFormat } from "../core/types.js";
+import type { BackendName, ImageFormat, VariantRecord } from "../core/types.js";
 
 export interface ManifestEntry {
   prompt: string;
@@ -15,6 +15,8 @@ export interface ManifestEntry {
   bytes: number;
   format: ImageFormat;
   generatedAt?: string;
+  variants?: VariantRecord[];
+  skippedVariants?: number[];
 }
 
 export function manifestPathFor(imagePath: string): string {

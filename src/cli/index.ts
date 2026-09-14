@@ -93,6 +93,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       "--transparent",
       "generate against a key colour and remove it, giving a real alpha channel",
     )
+    .option("--variants <widths>", "also write these widths, e.g. 400,800,1200")
     .option("--model <slug>", "pin a driver model")
     .option("--style <name>", "apply a named style from the project config")
     .option(
@@ -142,6 +143,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       "--transparent",
       "generate against a key colour and remove it, giving a real alpha channel",
     )
+    .option("--variants <widths>", "also write these widths, e.g. 400,800,1200")
     .option("-o, --out <path>", "write to this exact path")
     .option("--out-dir <dir>", "directory for the result")
     .option("--model <slug>", "pin the driver model")

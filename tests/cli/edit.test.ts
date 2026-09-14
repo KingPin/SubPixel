@@ -99,4 +99,15 @@ describe("buildEditRequest", () => {
       ),
     ).toThrow(/no alpha channel/);
   });
+
+  it("carries --variants into the request", () => {
+    const request = buildEditRequest(
+      "photo.png",
+      "brighter",
+      { variants: "400,800" },
+      noStyle,
+      noConfig,
+    );
+    expect(request.variants).toEqual([{ width: 400 }, { width: 800 }]);
+  });
 });

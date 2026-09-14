@@ -68,6 +68,14 @@ describe("cacheKey", () => {
 });
 
 describe("cacheKey and rawCacheKey with --transparent", () => {
+  it("ignores variants, which are post-processing and cost no quota", () => {
+    // Here to fail loudly the day someone widens the `Pick` to the whole request,
+    // which would re-bill every user for adding a width.
+    expect(cacheKey({ ...BASE, variants: [{ width: 400 }, { width: 800 }] } as never)).toBe(
+      cacheKey(BASE),
+    );
+  });
+
   it("keys transparent separately", () => {
     expect(cacheKey({ ...BASE, transparent: true })).not.toBe(cacheKey(BASE));
   });

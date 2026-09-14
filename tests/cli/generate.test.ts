@@ -126,4 +126,8 @@ describe("config precedence", () => {
       /no alpha channel/,
     );
   });
+
+  it("rejects a malformed --variants before generating", async () => {
+    await expect(runGenerate("a fox", { variants: "400,wide" })).rejects.toThrow(/wide/);
+  });
 });

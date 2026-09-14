@@ -18,6 +18,7 @@ import { resolveChain, runWithFallback } from "../providers/resolve.js";
 import { advancePast, resolveModel, type ResolvedModel } from "../providers/models.js";
 import { formatQuota, loadQuota, saveQuota, shouldWarn } from "../providers/quota.js";
 import { chromaKey } from "./chroma.js";
+import { buildVariants, variantPath } from "./variants.js";
 import { loadReferences } from "./references.js";
 import {
   cacheKey,
@@ -29,7 +30,13 @@ import {
 } from "./cache.js";
 import { writeManifest } from "./manifest.js";
 import { mapWithConcurrency } from "./semaphore.js";
-import { resolveOutputPath, sha256, sniffFormat, writeImage } from "./output.js";
+import {
+  resolveOutputPath,
+  sha256,
+  sniffFormat,
+  writeImage,
+  type WriteImageOptions,
+} from "./output.js";
 import {
   convert,
   enforceExactSize,
@@ -202,6 +209,67 @@ export async function preflightPostProcessing(request: GenerateRequest): Promise
   // the image is generated costs a unit of quota for an image the user never gets.
   // Unlike format conversion, this need is CERTAIN from the request alone.
   if (request.transparent) await loadSharp("--transparent");
+  if (request.variants?.length) await loadSharp("--variants");
+}
+
+/**
+ * Write every declared variant that is missing, and report what was skipped.
+ *
+ * Called by fresh generation AND by both cache-hit routes. A variant set is a
+ * property of the destination, not of the generation event: whether these bytes
+ * were paid for one second ago or came out of the cache changes nothing about
+ * which files the caller asked to exist.
+ *
+ * `writeImage` supplies the idempotency. A variant that is already on disk with
+ * exactly these bytes converges on its own path, so re-running is free and does
+ * not litter `-v2` siblings.
+ */
+async function publishVariants(
+  artifact: ImageArtifact,
+  bytes: Uint8Array,
+  request: GenerateRequest,
+  options: WriteImageOptions,
+  warn: (message: string) => void,
+): Promise<void> {
+  const specs = request.variants ?? [];
+  if (specs.length === 0) return;
+
+  // Derived from the bytes that were actually WRITTEN, not from the raw backend
+  // response. If `--exact-size` cropped the primary, every variant must be a scaled
+  // copy of that crop; deriving from the raw bytes would give a set whose members
+  // disagree about what the picture is.
+  const built = await buildVariants(
+    bytes,
+    specs.map((spec) => spec.width),
+    artifact.format,
+    warn,
+  );
+  const byWidth = new Map(built.map((variant) => [variant.width, variant]));
+
+  const written: NonNullable<ImageArtifact["variants"]> = [];
+  const skipped: number[] = [];
+  for (const spec of specs) {
+    const variant = byWidth.get(spec.width);
+    if (!variant) {
+      // buildVariants already warned. Record it so --check can tell a refused
+      // upscale apart from a missing file.
+      skipped.push(spec.width);
+      continue;
+    }
+    // The suffix comes from the spec, so a declared `@sm` lands on the filename the
+    // manifest declared and the drift check looks for.
+    const target = variantPath(artifact.path, spec.width, spec.suffix);
+    const result = await writeImage(target, variant.data, options);
+    written.push({
+      width: variant.width,
+      height: variant.height,
+      path: result.path,
+      bytes: result.bytes,
+    });
+  }
+
+  if (written.length > 0) artifact.variants = written;
+  if (skipped.length > 0) artifact.skippedVariants = skipped;
 }
 
 /**
@@ -351,10 +419,13 @@ async function runGeneration(
   const finishFromCache = async (
     artifact: ImageArtifact,
     entry: CacheEntry,
+    bytes: Uint8Array,
   ): Promise<GenerateResult> => {
     const model = entry.model ?? UNKNOWN_CACHED_MODEL;
     const backend = entry.backend ?? "codex-http";
     const effectivePrompt = entry.effectivePrompt ?? request.prompt;
+    // Before the manifest, so the sidecar records the files that now exist.
+    await publishVariants(artifact, bytes, request, writeOptions, warnAlways);
     await writeManifest(artifact.path, {
       prompt: request.prompt,
       effectivePrompt,
@@ -366,6 +437,8 @@ async function runGeneration(
       sha256: artifact.sha256,
       bytes: artifact.bytes,
       format: artifact.format,
+      variants: artifact.variants,
+      skippedVariants: artifact.skippedVariants,
     });
     return {
       images: [artifact],
@@ -389,7 +462,7 @@ async function runGeneration(
       // Materialise at THIS run's destination. A hit still has to produce the file
       // the caller asked for.
       const materialised = await materialiseFromCache(hit, destinationFor(0), writeOptions);
-      return finishFromCache(await withDimensions(materialised, hit.data), hit.entry);
+      return finishFromCache(await withDimensions(materialised, hit.data), hit.entry, hit.data);
     }
 
     // Second lookup, on the key the bytes were BANKED under. This is the recovery
@@ -414,7 +487,7 @@ async function runGeneration(
       );
       // Index the processed result under the full key so the next run is a plain hit.
       await storeCache(deps.stateDir, key, artifact, bytes, provenanceOf(rawHit.entry));
-      return finishFromCache(artifact, rawHit.entry);
+      return finishFromCache(artifact, rawHit.entry, bytes);
     }
   }
 
@@ -500,6 +573,7 @@ async function runGeneration(
       await writeImage(destinationFor(index), bytes, writeOptions),
       bytes,
     );
+    await publishVariants(artifact, bytes, request, writeOptions, warnAlways);
     await writeManifest(artifact.path, {
       prompt: request.prompt,
       effectivePrompt: result.effectivePrompt,
@@ -511,6 +585,8 @@ async function runGeneration(
       sha256: artifact.sha256,
       bytes: artifact.bytes,
       format: artifact.format,
+      variants: artifact.variants,
+      skippedVariants: artifact.skippedVariants,
     });
 
     // Only a single-image request has an unambiguous cache entry.

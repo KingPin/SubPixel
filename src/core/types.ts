@@ -82,6 +82,12 @@ export interface GenerateRequest {
    * `background: "transparent"`, which the image tool treats as a hint.
    */
   transparent?: boolean;
+  /**
+   * Extra widths to write beside the primary image. Post-processing only: this
+   * never reaches a backend and never changes the cache key, so adding a width to
+   * an existing project costs nothing but a resize.
+   */
+  variants?: VariantSpec[];
   referenceImages?: string[];
   /**
    * The same references, read and encoded. The engine fills this in; callers never
@@ -95,6 +101,26 @@ export interface GenerateRequest {
    * every engine test free of a config file.
    */
   style?: StyleDefinition;
+}
+
+/**
+ * One requested variant width, and optionally the name it publishes under.
+ *
+ * Declared here rather than in `src/engine/variants.ts` for the same reason
+ * `LoadedReference` is: `GenerateRequest` carries it, and core must not import the
+ * engine. `variants.ts` re-exports it so engine callers have one import.
+ */
+export interface VariantSpec {
+  width: number;
+  suffix?: string;
+}
+
+/** A variant that was actually written. */
+export interface VariantRecord {
+  width: number;
+  height: number;
+  path: string;
+  bytes: number;
 }
 
 export interface ImageArtifact {
@@ -116,6 +142,18 @@ export interface ImageArtifact {
    * instead. Callers print it so the user is never silently redirected.
    */
   siblingOf?: string;
+  /** Resized copies written beside this image, ascending by width. */
+  variants?: VariantRecord[];
+  /**
+   * Declared widths that were NOT written because they exceed the source.
+   *
+   * Recorded rather than merely warned about. `spx sync --check` compares the
+   * declared variant list against the files on disk; without this list a width the
+   * engine deliberately refused to upscale looks exactly like a width that failed
+   * to write, so the asset reports drift on every run and no amount of re-syncing
+   * ever clears it.
+   */
+  skippedVariants?: number[];
 }
 
 /** One image in a batch that did not make it. */

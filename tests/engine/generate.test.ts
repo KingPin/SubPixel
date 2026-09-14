@@ -20,13 +20,6 @@ let stateDir: string;
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02]);
 
-let sharpAvailable = true;
-try {
-  await import("sharp");
-} catch {
-  sharpAvailable = false;
-}
-
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "subpixel-generate-"));
   stateDir = join(dir, ".subpixel");
@@ -375,7 +368,7 @@ describe("generate", () => {
 // Needs a real decodable image, so it runs only where sharp is installed. The
 // recovery branch it covers is the one the raw-bytes bank exists for, so it is
 // worth the conditional rather than a fake resize seam in production code.
-describe.runIf(sharpAvailable)("recovering banked raw bytes", () => {
+describe.runIf(await sharpAvailable())("recovering banked raw bytes", () => {
   async function realPng(): Promise<Buffer> {
     const sharp = (await import("sharp")).default;
     return sharp({ create: { width: 64, height: 64, channels: 3, background: "#336699" } })
@@ -640,5 +633,50 @@ describe.runIf(await sharpAvailable())("pixel dimensions", () => {
     expect(recovered.cached).toBe(true);
     expect(recovered.images[0]!.width).toBe(4);
     expect(recovered.images[0]!.height).toBe(2);
+  });
+});
+
+describe.runIf(await sharpAvailable())("responsive variants", () => {
+  const realProvider = async () => ({
+    images: [tinyPng()],
+    model: "model-a",
+    effectivePrompt: "a fox",
+  });
+
+  it("publishes a newly declared variant on a cache hit", async () => {
+    // Variants are post-processing, so they are deliberately not in the cache key.
+    // Adding a width to an asset that is already cached has to produce the file
+    // WITHOUT a second request, or every width costs quota.
+    const provider = vi.fn(realProvider);
+    await generate({ prompt: "a fox" }, deps(provider));
+    const hit = await generate({ prompt: "a fox", variants: [{ width: 4 }] }, deps(provider));
+
+    expect(hit.cached).toBe(true);
+    expect(provider).toHaveBeenCalledTimes(1);
+    expect(hit.images[0]!.variants).toHaveLength(1);
+    await expect(readFile(hit.images[0]!.variants![0]!.path)).resolves.toBeTruthy();
+  });
+
+  it("records a width it refused to upscale, rather than leaving it unexplained", async () => {
+    // The fixture is 8px wide. Upscaling invents detail, so the width is skipped —
+    // but silently skipping it leaves the user hunting for a file that never comes.
+    const result = await generate(
+      { prompt: "a fox", variants: [{ width: 4 }, { width: 800 }] },
+      deps(realProvider),
+    );
+    expect(result.images[0]!.variants).toHaveLength(1);
+    expect(result.images[0]!.skippedVariants).toEqual([800]);
+  });
+
+  it("puts both lists in the sidecar", async () => {
+    const result = await generate(
+      { prompt: "a fox", variants: [{ width: 4 }, { width: 800 }] },
+      deps(realProvider),
+    );
+    const sidecar = JSON.parse(
+      await readFile(`${result.images[0]!.path}.json`, "utf8"),
+    ) as Record<string, unknown>;
+    expect(sidecar["variants"]).toHaveLength(1);
+    expect(sidecar["skippedVariants"]).toEqual([800]);
   });
 });

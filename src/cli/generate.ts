@@ -19,6 +19,7 @@ import { hasCodexBinary } from "../providers/codex-exec.js";
 import { resolveModel } from "../providers/models.js";
 import { resolveChain } from "../providers/resolve.js";
 import { parseBackend, parseCount, parseSeconds } from "./options.js";
+import { parseVariants } from "../engine/variants.js";
 import { resolveStyle } from "./styles.js";
 
 /**
@@ -61,6 +62,7 @@ export interface SharedCliOptions {
   verbose?: boolean;
   quiet?: boolean;
   transparent?: boolean;
+  variants?: string;
   /** Reference images, in the order the user gave them. */
   image?: string[];
 }
@@ -100,6 +102,7 @@ export function resolveSharedFields(
     exactSize: options.exactSize,
     model: options.model,
     transparent,
+    variants: parseVariants(options.variants),
     style,
   };
 }

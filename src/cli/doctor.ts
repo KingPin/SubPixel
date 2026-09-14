@@ -4,6 +4,7 @@ import { findOnPath } from "../core/fsx.js";
 import { modelCachePath, resolveModel } from "../providers/models.js";
 import { formatQuota, isQuotaStale, loadQuota, shouldWarn } from "../providers/quota.js";
 import { sharpAvailable } from "../engine/output.js";
+import { loadConfig } from "../config/load.js";
 
 export const TOS_NOTICE =
   "subpixel drives the undocumented chatgpt.com/backend-api/codex endpoint using your " +
@@ -29,6 +30,11 @@ export interface DoctorReport {
     fetchedAt?: string;
     cacheAgeHours?: number;
   };
+  config: {
+    /** The config file in force, or undefined when the project has none. */
+    path?: string;
+    styles: number;
+  };
   quota: {
     /** The one-line human summary, already marked "(stale)" when the reading is old. */
     summary: string;
@@ -43,6 +49,7 @@ export interface DoctorReport {
 }
 
 export interface DoctorOptions {
+  cwd?: string;
   authPath?: string;
   cachePath?: string;
   quotaPath?: string;
@@ -80,6 +87,8 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
 
   const sharp = await sharpAvailable();
 
+  const loaded = await loadConfig({ cwd: options.cwd });
+
   // Never throws: `loadQuota` degrades a missing, truncated, or hand-edited file to
   // undefined, and an unknown allowance must not turn a healthy environment into a FAIL.
   const quotaReading = await loadQuota(
@@ -99,6 +108,7 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
       fetchedAt: model.fetchedAt,
       cacheAgeHours: cacheAgeHours === undefined ? undefined : Math.round(cacheAgeHours * 10) / 10,
     },
+    config: { path: loaded.path, styles: Object.keys(loaded.config.styles ?? {}).length },
     quota: {
       summary: formatQuota(quotaReading),
       warn: shouldWarn(quotaReading),
@@ -131,6 +141,9 @@ export function formatDoctorReport(report: DoctorReport): string {
   );
   lines.push(
     `${mark(true)} sharp     ${report.sharp ? "available (--exact-size enabled)" : "not installed (--exact-size unavailable)"}`,
+  );
+  lines.push(
+    `${mark(true)} config    ${report.config.path ?? "none"}${report.config.styles > 0 ? ` (${report.config.styles} styles)` : ""}`,
   );
   // `mark` is inverted here on purpose. Every other line marks "is this present and
   // usable"; this one marks "is there room left". A reading above the threshold is the

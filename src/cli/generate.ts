@@ -1,4 +1,6 @@
 import { join, resolve } from "node:path";
+import { loadConfig } from "../config/load.js";
+import { ConfigError } from "../core/errors.js";
 import { createLogger, type LogLevel } from "../core/logger.js";
 import { redact } from "../core/redact.js";
 import type {
@@ -58,7 +60,14 @@ export function logLevelFor(options: GenerateCliOptions): LogLevel {
 }
 
 export async function runGenerate(prompt: string, options: GenerateCliOptions): Promise<void> {
-  const outDir = resolve(options.outDir ?? process.cwd());
+  const warn = (message: string) => process.stderr.write(`warning: ${message}\n`);
+  const { config } = await loadConfig({ warn });
+
+  // The precedence rule, in one place: a flag the user typed beats the project's
+  // config, and the config beats the built-in default. Commander gives `--out-dir`
+  // a default of process.cwd(), which would otherwise outrank the config and make
+  // the setting dead on arrival, so the default is declared here instead.
+  const outDir = resolve(options.outDir ?? config.outDir ?? process.cwd());
   const stateDir = join(process.cwd(), ".subpixel");
 
   const request: GenerateRequest = {
@@ -66,23 +75,34 @@ export async function runGenerate(prompt: string, options: GenerateCliOptions): 
     size: options.size,
     quality: options.quality,
     background: options.background,
-    format: options.format,
+    format: options.format ?? config.format,
     exactSize: options.exactSize,
     model: options.model,
     outputPath: options.out ? resolve(options.out) : undefined,
     n: parseCount(options.n, "-n"),
   };
 
-  const backend = parseBackend(options.backend);
+  const backend = parseBackend(options.backend ?? config.backend);
+  const allowPaid = options.allowPaid ?? config.allowPaid;
 
   // Every numeric flag is parsed HERE, above the --dry-run branch, not at the
   // generate() call below it. --dry-run exists to validate the plan before any
   // quota is spent, so a flag that would abort the real run has to abort the
   // rehearsal too; parsing them inside the call site made --dry-run report a
   // clean plan for `--timeout soon`.
-  const concurrency = parseCount(options.concurrency, "--concurrency");
+  const concurrency = parseCount(options.concurrency, "--concurrency") ?? config.concurrency;
   const stallMs = parseSeconds(options.stallTimeout, "--stall-timeout");
   const timeoutMs = parseSeconds(options.timeout, "--timeout");
+
+  // A budget is a spending limit, so it is checked before anything is spent and it
+  // refuses rather than silently clamping. Clamping would hand the user four images
+  // when they asked for ten and said nothing about which four.
+  const maxImages = config.budget?.maxImagesPerRun;
+  if (maxImages !== undefined && (request.n ?? 1) > maxImages) {
+    throw new ConfigError(
+      `-n ${request.n} exceeds budget.maxImagesPerRun (${maxImages}) set in the project config.`,
+    );
+  }
 
   // --force is the one place the two independent decisions are combined, and it
   // says so in its own help text. Everywhere else, bypassing the cache and
@@ -96,7 +116,7 @@ export async function runGenerate(prompt: string, options: GenerateCliOptions): 
     const chain = resolveChain({
       hasCodexBinary: await hasCodexBinary(),
       requested: backend,
-      allowPaid: options.allowPaid,
+      allowPaid,
     });
     process.stdout.write(
       `${JSON.stringify(
@@ -127,7 +147,7 @@ export async function runGenerate(prompt: string, options: GenerateCliOptions): 
     outDir,
     stateDir,
     backend,
-    allowPaid: options.allowPaid,
+    allowPaid,
     noCache,
     overwrite,
     concurrency,

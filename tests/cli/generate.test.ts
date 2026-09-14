@@ -1,3 +1,6 @@
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 // vi.mock is hoisted, so the fake has to be declared with it, not above it.
@@ -5,6 +8,7 @@ const generate = vi.fn();
 vi.mock("../../src/engine/generate.js", () => ({ generate }));
 
 const { runGenerate } = await import("../../src/cli/generate.js");
+const { loadConfig } = await import("../../src/config/load.js");
 
 describe("spx generate --json", () => {
   it("reports a partial batch through the final CLI emitter", async () => {
@@ -87,5 +91,33 @@ describe("spx generate --json", () => {
       runGenerate("a red fox", { dryRun: true, stallTimeout: "0" }),
     ).rejects.toThrow(/--stall-timeout/);
     expect(generate).not.toHaveBeenCalled();
+  });
+});
+
+describe("config precedence", () => {
+  it("uses the config outDir when --out-dir is absent", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subpixel-cli-config-"));
+    await writeFile(join(root, "subpixel.config.json"), '{ "outDir": "generated", "format": "webp" }');
+    const previous = process.cwd();
+    process.chdir(root);
+    try {
+      const loaded = await loadConfig({ cwd: root, stopAt: root });
+      expect(loaded.config.outDir).toBe(join(root, "generated"));
+      expect(loaded.config.format).toBe("webp");
+    } finally {
+      process.chdir(previous);
+    }
+  });
+
+  it("refuses an -n above the configured budget before generating", async () => {
+    const root = await mkdtemp(join(tmpdir(), "subpixel-cli-budget-"));
+    await writeFile(join(root, "subpixel.config.json"), '{ "budget": { "maxImagesPerRun": 2 } }');
+    const previous = process.cwd();
+    process.chdir(root);
+    try {
+      await expect(runGenerate("a fox", { n: "5" })).rejects.toThrow(/budget\.maxImagesPerRun/);
+    } finally {
+      process.chdir(previous);
+    }
   });
 });

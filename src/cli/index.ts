@@ -89,6 +89,10 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option("--background <mode>", "transparent | opaque | auto")
     .option("--format <fmt>", "png | jpeg | webp (default: the config, else png)")
     .option("--exact-size <WxH>", "post-process to exactly this size (requires sharp)")
+    .option(
+      "--transparent",
+      "generate against a key colour and remove it, giving a real alpha channel",
+    )
     .option("--model <slug>", "pin a driver model")
     .option("--style <name>", "apply a named style from the project config")
     .option(
@@ -134,6 +138,10 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option("--format <fmt>", "png | jpeg | webp (default: the config, else png)")
     .option("--style <name>", "apply a named style from the project config")
     .option("--exact-size <WxH>", "resize the result to exactly this size")
+    .option(
+      "--transparent",
+      "generate against a key colour and remove it, giving a real alpha channel",
+    )
     .option("-o, --out <path>", "write to this exact path")
     .option("--out-dir <dir>", "directory for the result")
     .option("--model <slug>", "pin the driver model")

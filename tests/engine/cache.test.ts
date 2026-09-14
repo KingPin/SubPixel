@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
+import { rawCacheKey } from "../../src/engine/generate.js";
 import {
   cacheKey,
   lookupCache,
@@ -63,6 +64,23 @@ describe("cacheKey", () => {
 
   it("returns a 64-character hex digest", () => {
     expect(cacheKey(BASE)).toMatch(/^[0-9a-f]{64}$/);
+  });
+});
+
+describe("cacheKey and rawCacheKey with --transparent", () => {
+  it("keys transparent separately", () => {
+    expect(cacheKey({ ...BASE, transparent: true })).not.toBe(cacheKey(BASE));
+  });
+
+  it("keeps transparent in the raw key", () => {
+    expect(rawCacheKey({ ...BASE, transparent: true })).not.toBe(rawCacheKey(BASE));
+  });
+
+  it("does not let the raw bank stand in for a finished transparent image", () => {
+    // Without the domain prefix from Task 6 Step 7a these two are equal, and the
+    // unprocessed magenta bytes become a cache hit the next run serves for free.
+    const request = { ...BASE, transparent: true };
+    expect(rawCacheKey(request)).not.toBe(cacheKey(request));
   });
 });
 

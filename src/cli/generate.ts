@@ -60,6 +60,7 @@ export interface SharedCliOptions {
   dryRun?: boolean;
   verbose?: boolean;
   quiet?: boolean;
+  transparent?: boolean;
   /** Reference images, in the order the user gave them. */
   image?: string[];
 }
@@ -77,13 +78,28 @@ export function resolveSharedFields(
   style: StyleDefinition | undefined,
   config: SubpixelConfig,
 ): Omit<GenerateRequest, "prompt" | "outputPath"> {
+  const format = options.format ?? style?.format ?? config.format;
+  const transparent = options.transparent === true;
+
+  // JPEG has no alpha channel. Producing one anyway would flatten the transparency
+  // onto black and hand the user a file that looks like the feature failed. Checked
+  // here, so `generate` and `edit` refuse it identically.
+  if (transparent && format === "jpeg") {
+    throw new ConfigError(
+      "--transparent cannot produce JPEG, which has no alpha channel. Use png or webp.",
+    );
+  }
+
   return {
     size: options.size ?? style?.size,
     quality: options.quality ?? style?.quality,
     background: options.background ?? style?.background,
-    format: options.format ?? style?.format ?? config.format,
+    // With no explicit format, transparency implies PNG rather than the configured
+    // default, which may well be jpeg.
+    format: transparent ? (format ?? "png") : format,
     exactSize: options.exactSize,
     model: options.model,
+    transparent,
     style,
   };
 }

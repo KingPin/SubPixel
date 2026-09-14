@@ -152,4 +152,16 @@ describe("augmentPrompt with a style", () => {
   it("adds nothing for a style that only carries generation defaults", () => {
     expect(augmentPrompt("a fox", { style: { format: "webp" } })).toBe("a fox");
   });
+
+  it("asks for a flat magenta background when transparent is set", () => {
+    const result = augmentPrompt("a fox", { transparent: true });
+    expect(result).toContain("#FF00FF");
+    expect(result).toContain("no shadow cast onto the background");
+  });
+
+  it("prefers the chroma instruction over the plain transparent-background hint", () => {
+    const result = augmentPrompt("a fox", { transparent: true, background: "transparent" });
+    expect(result).toContain("#FF00FF");
+    expect(result).not.toContain("Place the subject on an empty");
+  });
 });

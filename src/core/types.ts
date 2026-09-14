@@ -77,6 +77,11 @@ export interface GenerateRequest {
   outputPath?: string;
   format?: ImageFormat;
   /** Reference images for an edit, as paths the user typed. Empty for a pure generation. */
+  /**
+   * Generate against a flat key colour and remove it locally. This is stronger than
+   * `background: "transparent"`, which the image tool treats as a hint.
+   */
+  transparent?: boolean;
   referenceImages?: string[];
   /**
    * The same references, read and encoded. The engine fills this in; callers never

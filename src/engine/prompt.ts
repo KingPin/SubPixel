@@ -1,4 +1,5 @@
 import { ConfigError } from "../core/errors.js";
+import { CHROMA_KEY_HEX } from "./chroma.js";
 import { STYLE_TEXT_FIELDS } from "../core/types.js";
 import type { GenerateRequest, ImageToolParams, StyleDefinition } from "../core/types.js";
 
@@ -85,7 +86,7 @@ export function describeAspect(size: string): string {
  */
 export function augmentPrompt(
   prompt: string,
-  request: Pick<GenerateRequest, "size" | "quality" | "background" | "style">,
+  request: Pick<GenerateRequest, "size" | "quality" | "background" | "style" | "transparent">,
 ): string {
   let text = prompt;
 
@@ -106,7 +107,13 @@ export function augmentPrompt(
   if (request.quality === "high") {
     requirements.push("Render with high detail and clean, sharp edges.");
   }
-  if (request.background === "transparent") {
+  if (request.transparent) {
+    requirements.push(
+      `The background must be a single flat ${CHROMA_KEY_HEX} magenta fill covering every ` +
+        "pixel the subject does not occupy. No gradient, no texture, no vignette, and no " +
+        "shadow cast onto the background. The subject itself must contain no magenta.",
+    );
+  } else if (request.background === "transparent") {
     requirements.push(
       "The background must be fully transparent. Place the subject on an empty " +
         "background with no scenery, no shadow plane, and no solid colour fill.",

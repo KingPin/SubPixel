@@ -120,4 +120,10 @@ describe("config precedence", () => {
       process.chdir(previous);
     }
   });
+
+  it("refuses --transparent with --format jpeg", async () => {
+    await expect(runGenerate("a fox", { transparent: true, format: "jpeg" })).rejects.toThrow(
+      /no alpha channel/,
+    );
+  });
 });

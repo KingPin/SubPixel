@@ -18,7 +18,7 @@ import { writeImage, type WriteImageOptions } from "./output.js";
 export interface CacheKeyInput
   extends Pick<
     GenerateRequest,
-    "prompt" | "size" | "quality" | "background" | "format" | "exactSize" | "style"
+    "prompt" | "size" | "quality" | "background" | "format" | "exactSize" | "style" | "transparent"
   > {
   /**
    * sha256 of each reference image's CONTENTS, in the order the user gave them.
@@ -39,6 +39,10 @@ export function cacheKey(request: CacheKeyInput): string {
   part(request.background);
   part(request.format ?? "png");
   part(request.exactSize);
+  // `transparent` changes the PROMPT, so it changes what the backend draws. It
+  // therefore belongs in the raw key as well as the derived one — a magenta-backed
+  // render is not an alternate encoding of an ordinary render.
+  part(request.transparent ? "transparent" : "");
   // Style text goes into the key because it goes into the prompt. Editing a style
   // in the config must invalidate every image that style produced; leaving it out
   // would serve yesterday's look forever.

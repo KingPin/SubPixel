@@ -580,6 +580,45 @@ describe.runIf(await sharpAvailable())("pixel dimensions", () => {
     expect(result.images[0]!.format).toBe("webp");
   });
 
+  it("keys banked raw bytes on retry, without a second request", async () => {
+    // Exactly the failure this guards: run one banks the magenta bytes and dies on
+    // the way to disk. Run two must produce a KEYED image, and must not call the
+    // backend — the user has already paid for those pixels once.
+    const { default: sharp } = (await import("sharp")) as { default: typeof import("sharp") };
+    const magenta = await sharp(Buffer.from([255, 0, 255, 255, 0, 255]), {
+      raw: { width: 2, height: 1, channels: 3 },
+    })
+      .png()
+      .toBuffer();
+    const magentaProvider = async () => ({
+      images: [magenta],
+      model: "model-a",
+      effectivePrompt: "a fox",
+    });
+
+    const blocker = join(dir, "chroma-blocker");
+    await writeFile(blocker, "not a directory", "utf8");
+    await expect(
+      generate(
+        { prompt: "a fox", transparent: true, outputPath: join(blocker, "out.png") },
+        deps(magentaProvider),
+      ),
+    ).rejects.toThrow();
+
+    const recovered = await generate(
+      { prompt: "a fox", transparent: true },
+      deps(() => {
+        throw new Error("must not call the backend");
+      }),
+    );
+    expect(recovered.cached).toBe(true);
+    const { data } = await sharp(await readFile(recovered.images[0]!.path))
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    expect(data[3]).toBe(0);
+  });
+
   it("re-processes banked raw bytes rather than serving them", async () => {
     // Bank the raw bytes by failing the publish, then ask for the same picture with
     // a local step that must run. A provider that throws proves no second purchase.

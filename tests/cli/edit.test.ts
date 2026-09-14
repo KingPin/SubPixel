@@ -75,4 +75,28 @@ describe("buildEditRequest", () => {
     );
     expect(request.size).toBe("512x512");
   });
+
+  it("carries --transparent into the request", () => {
+    const request = buildEditRequest(
+      "photo.png",
+      "brighter",
+      { transparent: true },
+      noStyle,
+      noConfig,
+    );
+    expect(request.transparent).toBe(true);
+    expect(request.format).toBe("png");
+  });
+
+  it("refuses --transparent with --format jpeg", () => {
+    expect(() =>
+      buildEditRequest(
+        "photo.png",
+        "brighter",
+        { transparent: true, format: "jpeg" },
+        noStyle,
+        noConfig,
+      ),
+    ).toThrow(/no alpha channel/);
+  });
 });

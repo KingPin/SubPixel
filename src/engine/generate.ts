@@ -17,6 +17,7 @@ import { generateViaCodexExec, hasCodexBinary } from "../providers/codex-exec.js
 import { resolveChain, runWithFallback } from "../providers/resolve.js";
 import { advancePast, resolveModel, type ResolvedModel } from "../providers/models.js";
 import { formatQuota, loadQuota, saveQuota, shouldWarn } from "../providers/quota.js";
+import { chromaKey } from "./chroma.js";
 import { loadReferences } from "./references.js";
 import {
   cacheKey,
@@ -32,6 +33,7 @@ import { resolveOutputPath, sha256, sniffFormat, writeImage } from "./output.js"
 import {
   convert,
   enforceExactSize,
+  loadSharp,
   preflightExactSize,
   probeDimensions,
   sharpAvailable,
@@ -155,6 +157,12 @@ async function postProcess(
 ): Promise<Uint8Array> {
   let bytes: Uint8Array = raw;
 
+  // Order matters. Keying first means `--exact-size` resamples an alpha channel,
+  // which produces a clean soft edge. Resizing first would resample a hard colour
+  // boundary and then key the blurred result, leaving a magenta halo that no
+  // tolerance setting removes.
+  if (request.transparent) bytes = await chromaKey(bytes, {});
+
   if (request.exactSize) bytes = await enforceExactSize(bytes, request.exactSize);
 
   // Format conversion is last, and it is a real conversion.
@@ -190,6 +198,10 @@ async function postProcess(
  */
 export async function preflightPostProcessing(request: GenerateRequest): Promise<void> {
   await preflightExactSize(request.exactSize);
+  // Same reasoning as --exact-size: discovering a missing optional dependency after
+  // the image is generated costs a unit of quota for an image the user never gets.
+  // Unlike format conversion, this need is CERTAIN from the request alone.
+  if (request.transparent) await loadSharp("--transparent");
 }
 
 /**

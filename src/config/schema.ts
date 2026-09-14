@@ -69,7 +69,7 @@ function asPositiveInt(value: unknown, source: string, key: string): number {
   return value;
 }
 
-function validateStyle(value: unknown, source: string, name: string): StyleDefinition {
+export function validateStyle(value: unknown, source: string, name: string): StyleDefinition {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     fail(source, `styles.${name}`, "an object", value);
   }

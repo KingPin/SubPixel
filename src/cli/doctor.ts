@@ -1,6 +1,8 @@
+import { join } from "node:path";
 import { authPath, decodeJwtExp, isExpired, readAuth } from "../auth/read.js";
 import { findOnPath } from "../core/fsx.js";
 import { modelCachePath, resolveModel } from "../providers/models.js";
+import { formatQuota, isQuotaStale, loadQuota, shouldWarn } from "../providers/quota.js";
 import { sharpAvailable } from "../engine/output.js";
 
 export const TOS_NOTICE =
@@ -27,12 +29,23 @@ export interface DoctorReport {
     fetchedAt?: string;
     cacheAgeHours?: number;
   };
+  quota: {
+    /** The one-line human summary, already marked "(stale)" when the reading is old. */
+    summary: string;
+    /** True when the last reading was at or above the warning threshold. */
+    warn: boolean;
+    /** True when no reading exists, or the one on disk is older than QUOTA_STALE_MS. */
+    stale: boolean;
+    /** When the reading was taken. Absent when no reading has ever been recorded. */
+    observedAt?: string;
+  };
   notice: string;
 }
 
 export interface DoctorOptions {
   authPath?: string;
   cachePath?: string;
+  quotaPath?: string;
   env?: NodeJS.ProcessEnv;
 }
 
@@ -67,6 +80,12 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
 
   const sharp = await sharpAvailable();
 
+  // Never throws: `loadQuota` degrades a missing, truncated, or hand-edited file to
+  // undefined, and an unknown allowance must not turn a healthy environment into a FAIL.
+  const quotaReading = await loadQuota(
+    options.quotaPath ?? join(process.cwd(), ".subpixel", "quota.json"),
+  );
+
   return {
     // Expired credentials are still "ok": the engine refreshes them on demand.
     ok: auth.present && auth.problem === undefined,
@@ -79,6 +98,12 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
       source: model.source,
       fetchedAt: model.fetchedAt,
       cacheAgeHours: cacheAgeHours === undefined ? undefined : Math.round(cacheAgeHours * 10) / 10,
+    },
+    quota: {
+      summary: formatQuota(quotaReading),
+      warn: shouldWarn(quotaReading),
+      stale: isQuotaStale(quotaReading),
+      observedAt: quotaReading?.observedAt,
     },
     notice: TOS_NOTICE,
   };
@@ -107,6 +132,11 @@ export function formatDoctorReport(report: DoctorReport): string {
   lines.push(
     `${mark(true)} sharp     ${report.sharp ? "available (--exact-size enabled)" : "not installed (--exact-size unavailable)"}`,
   );
+  // `mark` is inverted here on purpose. Every other line marks "is this present and
+  // usable"; this one marks "is there room left". A reading above the threshold is the
+  // one thing in the report the user can act on before it bites, so it gets the FAIL
+  // column even though nothing is broken. `report.ok` is deliberately unaffected.
+  lines.push(`${mark(!report.quota.warn)} ${report.quota.summary}`);
   lines.push("");
   lines.push(report.notice);
   return lines.join("\n");

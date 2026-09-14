@@ -96,3 +96,57 @@ describe("formatDoctorReport", () => {
     expect(text).not.toContain("rt_secret_value_here");
   });
 });
+
+describe("collectDoctorReport quota reporting", () => {
+  async function baseOptions(quotaPath: string) {
+    return { authPath: await seedAuth(), cachePath: join(home, "missing.json"), quotaPath };
+  }
+
+  it("reports the last recorded quota reading", async () => {
+    const quotaPath = join(home, "quota.json");
+    await writeFile(
+      quotaPath,
+      JSON.stringify({
+        planType: "plus",
+        observedAt: new Date().toISOString(),
+        windows: [{ usedPercent: 96, windowMinutes: 300 }],
+      }),
+    );
+    const report = await collectDoctorReport(await baseOptions(quotaPath));
+    expect(report.quota.warn).toBe(true);
+    expect(report.quota.stale).toBe(false);
+    expect(report.quota.observedAt).toBeDefined();
+    // A nearly-spent allowance is a warning, not a broken environment.
+    expect(report.ok).toBe(true);
+    expect(formatDoctorReport(report)).toMatch(/96% of the 5h window used/);
+  });
+
+  it("labels an old reading stale", async () => {
+    const quotaPath = join(home, "quota.json");
+    await writeFile(
+      quotaPath,
+      JSON.stringify({
+        planType: "plus",
+        observedAt: new Date(Date.now() - 48 * 3_600_000).toISOString(),
+        windows: [{ usedPercent: 10, windowMinutes: 300 }],
+      }),
+    );
+    const report = await collectDoctorReport(await baseOptions(quotaPath));
+    expect(report.quota.stale).toBe(true);
+    expect(report.quota.summary).toContain("(stale)");
+  });
+
+  it("reports an unknown quota without failing the report", async () => {
+    const report = await collectDoctorReport(await baseOptions(join(home, "absent.json")));
+    expect(report.quota.warn).toBe(false);
+    expect(report.quota.summary).toContain("unknown");
+  });
+
+  it("survives a corrupt quota file", async () => {
+    const quotaPath = join(home, "quota.json");
+    await writeFile(quotaPath, "{ not json");
+    const report = await collectDoctorReport(await baseOptions(quotaPath));
+    expect(report.quota.summary).toContain("unknown");
+    expect(report.ok).toBe(true);
+  });
+});

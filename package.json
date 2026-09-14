@@ -15,6 +15,7 @@
     "build": "tsc -p tsconfig.json",
     "postbuild": "chmod +x dist/cli/bin.js",
     "test": "vitest run",
+    "test:live": "SUBPIXEL_LIVE=1 vitest run tests/live",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

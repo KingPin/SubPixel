@@ -2,14 +2,19 @@ import { join, resolve } from "node:path";
 import { createLogger, type LogLevel } from "../core/logger.js";
 import { redact } from "../core/redact.js";
 import type {
-  BackendName,
   GenerateRequest,
   ImageBackground,
   ImageFormat,
   ImageQuality,
 } from "../core/types.js";
+import { cacheKey } from "../engine/cache.js";
 import { emit, type EmitFormat } from "../engine/emit.js";
 import { generate } from "../engine/generate.js";
+import { augmentPrompt } from "../engine/prompt.js";
+import { hasCodexBinary } from "../providers/codex-exec.js";
+import { resolveModel } from "../providers/models.js";
+import { resolveChain } from "../providers/resolve.js";
+import { parseBackend, parseCount, parseSeconds } from "./options.js";
 
 export interface GenerateCliOptions {
   size?: string;
@@ -34,9 +39,14 @@ export interface GenerateCliOptions {
    */
   overwrite?: boolean;
   timeout?: string;
+  stallTimeout?: string;
   concurrency?: string;
-  backend?: BackendName;
+  backend?: string;
   allowPaid?: boolean;
+  /** Sugar for `--no-cache --overwrite`. The only place the two are combined. */
+  force?: boolean;
+  /** Print the resolved plan and stop, without a network call or a byte written. */
+  dryRun?: boolean;
   verbose?: boolean;
   quiet?: boolean;
 }
@@ -60,18 +70,69 @@ export async function runGenerate(prompt: string, options: GenerateCliOptions): 
     exactSize: options.exactSize,
     model: options.model,
     outputPath: options.out ? resolve(options.out) : undefined,
-    n: options.n ? Number(options.n) : undefined,
+    n: parseCount(options.n, "-n"),
   };
+
+  const backend = parseBackend(options.backend);
+
+  // Every numeric flag is parsed HERE, above the --dry-run branch, not at the
+  // generate() call below it. --dry-run exists to validate the plan before any
+  // quota is spent, so a flag that would abort the real run has to abort the
+  // rehearsal too; parsing them inside the call site made --dry-run report a
+  // clean plan for `--timeout soon`.
+  const concurrency = parseCount(options.concurrency, "--concurrency");
+  const stallMs = parseSeconds(options.stallTimeout, "--stall-timeout");
+  const timeoutMs = parseSeconds(options.timeout, "--timeout");
+
+  // --force is the one place the two independent decisions are combined, and it
+  // says so in its own help text. Everywhere else, bypassing the cache and
+  // replacing a file on disk stay separate: --no-cache still refuses to clobber,
+  // and --overwrite still serves a cache hit.
+  const noCache = options.force === true || options.cache === false;
+  const overwrite = options.force === true || options.overwrite === true;
+
+  if (options.dryRun) {
+    const resolved = await resolveModel({ override: options.model });
+    const chain = resolveChain({
+      hasCodexBinary: await hasCodexBinary(),
+      requested: backend,
+      allowPaid: options.allowPaid,
+    });
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          dryRun: true,
+          chain,
+          model: resolved.slug,
+          modelSource: resolved.source,
+          // --dry-run is the one path that prints the prompt verbatim, and it is
+          // the path people reach for when something looks wrong — often with the
+          // config that broke it pasted into the prompt. Same door as `alt` in
+          // `toJsonResult` and `effectivePrompt` in `storeCache`; same mask.
+          effectivePrompt: redact(augmentPrompt(request.prompt, request)),
+          outDir,
+          cacheKey: cacheKey(request),
+          // Printed so --force can be verified without spending anything.
+          noCache,
+          overwrite,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    return;
+  }
 
   const result = await generate(request, {
     outDir,
     stateDir,
-    noCache: options.cache === false,
-    overwrite: options.overwrite === true,
-    timeoutMs: options.timeout ? Number(options.timeout) * 1000 : undefined,
-    concurrency: options.concurrency ? Number(options.concurrency) : undefined,
-    backend: options.backend,
+    backend,
     allowPaid: options.allowPaid,
+    noCache,
+    overwrite,
+    concurrency,
+    stallMs,
+    timeoutMs,
     logger: createLogger({ level: logLevelFor(options) }),
     // Format mismatches and sibling redirects survive --quiet, per the spec's
     // "never lie about bytes" rule. They bypass the level-filtered logger.

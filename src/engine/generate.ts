@@ -49,6 +49,8 @@ export interface GenerateDeps {
   overwrite?: boolean;
   /** Whole-request budget in milliseconds, started here, after the slot is held. */
   timeoutMs?: number;
+  /** How long a stream may produce nothing before it is abandoned. */
+  stallMs?: number;
   /** How many images of an `-n` batch may be in flight at once. */
   concurrency?: number;
   backend?: BackendName;
@@ -186,8 +188,22 @@ async function runGeneration(
           // The deadline is forwarded, not recreated. It was started in the
           // worker after the concurrency slot and the lock were taken, and it is
           // what makes --timeout cover connect, headers and body.
-          "codex-http": (r) => generateViaCodexHttp(r, { model: opts.model, deadline: opts.deadline }),
-          "codex-exec": (r) => generateViaCodexExec(r, { model: opts.model, deadline: opts.deadline }),
+          "codex-http": (r) =>
+            generateViaCodexHttp(r, {
+              model: opts.model,
+              stallMs: deps.stallMs,
+              deadline: opts.deadline,
+            }),
+          "codex-exec": (r) =>
+            generateViaCodexExec(r, {
+              model: opts.model,
+              timeoutMs: deps.timeoutMs,
+              // Exec runs after HTTP has already spent part of the request. Without
+              // the deadline it starts a fresh full budget, so `--timeout 60` can
+              // run for two minutes, and a request the user stopped waiting for can
+              // still spawn and spend quota.
+              deadline: opts.deadline,
+            }),
         },
         logger,
         req,

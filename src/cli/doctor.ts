@@ -1,6 +1,7 @@
 import { authPath, decodeJwtExp, isExpired, readAuth } from "../auth/read.js";
 import { findOnPath } from "../core/fsx.js";
 import { modelCachePath, resolveModel } from "../providers/models.js";
+import { sharpAvailable } from "../engine/output.js";
 
 export const TOS_NOTICE =
   "subpixel drives the undocumented chatgpt.com/backend-api/codex endpoint using your " +
@@ -64,13 +65,7 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
     ? (Date.now() - Date.parse(model.fetchedAt)) / 3_600_000
     : undefined;
 
-  let sharp = false;
-  try {
-    await import("sharp");
-    sharp = true;
-  } catch {
-    sharp = false;
-  }
+  const sharp = await sharpAvailable();
 
   return {
     // Expired credentials are still "ok": the engine refreshes them on demand.

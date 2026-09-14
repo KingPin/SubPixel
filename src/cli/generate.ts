@@ -2,6 +2,7 @@ import { join, resolve } from "node:path";
 import { createLogger, type LogLevel } from "../core/logger.js";
 import { redact } from "../core/redact.js";
 import type { GenerateRequest, ImageBackground, ImageFormat, ImageQuality } from "../core/types.js";
+import { emit, type EmitFormat } from "../engine/emit.js";
 import { generate } from "../engine/generate.js";
 
 export interface GenerateCliOptions {
@@ -15,6 +16,7 @@ export interface GenerateCliOptions {
   outDir?: string;
   n?: string;
   json?: boolean;
+  emit?: EmitFormat;
   /**
    * Commander's `--no-cache` sets `cache: false`, NOT `noCache: true`. Naming the
    * field for the negated flag is a silent no-op, so the field is named `cache`.
@@ -64,11 +66,6 @@ export async function runGenerate(prompt: string, options: GenerateCliOptions): 
     warnAlways: (message) => process.stderr.write(`warning: ${message}\n`),
   });
 
-  if (options.json) {
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-    return;
-  }
-  for (const image of result.images) {
-    process.stdout.write(`${image.path}\n`);
-  }
+  const format: EmitFormat = options.json ? "json" : (options.emit ?? "path");
+  process.stdout.write(`${emit(result, process.cwd(), format)}\n`);
 }

@@ -63,6 +63,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option("--out-dir <dir>", "directory for generated images", process.cwd())
     .option("-n <count>", "number of images", "1")
     .option("--json", "emit the result as JSON on stdout")
+    .option("--emit <format>", "path | markdown | jsx | html", "path")
     .option("--no-cache", "ignore the cache for this request")
     .option("--overwrite", "replace an existing output file")
     .option("--no-overwrite", "write a -v2 sibling instead of replacing (the default)")

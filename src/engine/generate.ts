@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { ModelUnavailable, OutputError } from "../core/errors.js";
 import { createDeadline, type Deadline } from "../core/deadline.js";
@@ -26,13 +27,14 @@ import {
 } from "./cache.js";
 import { writeManifest } from "./manifest.js";
 import { mapWithConcurrency } from "./semaphore.js";
+import { resolveOutputPath, sha256, sniffFormat, writeImage } from "./output.js";
 import {
+  convert,
   enforceExactSize,
   preflightExactSize,
-  resolveOutputPath,
-  sha256,
-  writeImage,
-} from "./output.js";
+  probeDimensions,
+  sharpAvailable,
+} from "./sharpx.js";
 
 export type ProviderFn = (
   request: GenerateRequest,
@@ -108,9 +110,91 @@ export async function callWithModelRecovery(
   }
 }
 
-/** The key for the bytes as the backend produced them, before any local resize. */
-function rawCacheKey(request: GenerateRequest): string {
-  return cacheKey({ ...request, exactSize: undefined });
+/**
+ * The key for the bytes as the backend produced them, before any local step.
+ *
+ * The domain prefix is the point. Dropping the locally-applied fields is not
+ * enough: when none of them are set, the "raw" key equals the processed key, and
+ * the bank of unprocessed bytes becomes a cache hit that serves a half-finished
+ * image. A separate namespace makes that collision unrepresentable rather than
+ * merely unlikely.
+ *
+ * `format` is dropped for the same reason `exactSize` is: format is a LOCAL
+ * conversion (see `postProcess`), so the same backend bytes serve every requested
+ * format.
+ */
+export function rawCacheKey(request: GenerateRequest): string {
+  return createHash("sha256")
+    .update("raw\0")
+    .update(cacheKey({ ...request, exactSize: undefined, format: undefined }))
+    .digest("hex");
+}
+
+/**
+ * Every local transformation between "bytes the backend returned" and "bytes on
+ * disk", in the one order that is correct.
+ *
+ * Fresh generation and raw-bank recovery both call THIS. That is the whole reason
+ * it exists: the two paths produced different images the last time they each had
+ * their own copy of these steps.
+ */
+async function postProcess(
+  raw: Uint8Array,
+  request: GenerateRequest,
+  warn: (message: string) => void,
+): Promise<Uint8Array> {
+  let bytes: Uint8Array = raw;
+
+  if (request.exactSize) bytes = await enforceExactSize(bytes, request.exactSize);
+
+  // Format conversion is last, and it is a real conversion.
+  //
+  // `writeImage` does not convert: it sniffs the bytes and renames the file to
+  // match them. So a request for `hero.webp` that the backend answers with PNG
+  // bytes writes `hero.png` — and `assets.yml`, which declared `hero.webp`, then
+  // reports that asset as missing on every run, forever. A declared format is a
+  // promise about the file, not a hint about the request.
+  const actual = sniffFormat(bytes);
+  if (request.format && actual && actual !== request.format) {
+    if (await sharpAvailable()) {
+      bytes = await convert(bytes, request.format);
+    } else {
+      // Not fatal: the bytes are a real image and the user gets it, correctly named
+      // for what it is. But say plainly why the name is not the one they asked for.
+      warn(
+        `The backend returned ${actual}, not ${request.format}, and sharp is not installed to convert it. ` +
+          `Writing a .${actual} file. Run \`npm i sharp\` for ${request.format} output.`,
+      );
+    }
+  }
+
+  return bytes;
+}
+
+/**
+ * Everything a local post-processing step needs, checked BEFORE any quota is spent.
+ *
+ * Format conversion is deliberately NOT here: whether it is needed depends on what
+ * the backend returns, and refusing a `--format webp` run on a machine without
+ * sharp would break the common case where the backend simply returns WebP.
+ */
+export async function preflightPostProcessing(request: GenerateRequest): Promise<void> {
+  await preflightExactSize(request.exactSize);
+}
+
+/**
+ * Attach the real pixel dimensions, best effort.
+ *
+ * `ImageArtifact` has declared `width?`/`height?` since M1 and nothing filled them
+ * in, so a consumer reading the sidecar manifest to lay out a page had to open the
+ * image itself. sharp is optional, so an absent dependency — or bytes it cannot
+ * decode — leaves them unset rather than failing the run.
+ */
+async function withDimensions(
+  artifact: ImageArtifact,
+  data: Uint8Array,
+): Promise<ImageArtifact> {
+  return { ...artifact, ...(await probeDimensions(data)) };
 }
 
 /**
@@ -134,7 +218,7 @@ export async function generate(
   // Fail on a bad --exact-size or a missing sharp BEFORE anything is spent. Both
   // checks are free and deterministic; discovering them after generation costs the
   // user quota for an image they never receive.
-  await preflightExactSize(request.exactSize);
+  await preflightPostProcessing(request);
 
   const key = cacheKey(request);
   const count = Math.max(1, request.n ?? 1);
@@ -272,7 +356,8 @@ async function runGeneration(
       logger.debug(`Cache hit for ${key.slice(0, 12)}; no quota spent.`);
       // Materialise at THIS run's destination. A hit still has to produce the file
       // the caller asked for.
-      return finishFromCache(await materialiseFromCache(hit, destinationFor(0), writeOptions), hit.entry);
+      const materialised = await materialiseFromCache(hit, destinationFor(0), writeOptions);
+      return finishFromCache(await withDimensions(materialised, hit.data), hit.entry);
     }
 
     // Second lookup, on the key the bytes were BANKED under. This is the recovery
@@ -280,19 +365,24 @@ async function runGeneration(
     // failed in `sharp`, in `mkdir`, or on a full disk. Without this lookup the
     // retry looks like a plain miss and buys the same picture again.
     //
-    // The two keys differ only when `--exact-size` is set, so this costs one extra
-    // `stat`-shaped miss on the common path and nothing at all otherwise.
+    // The raw key lives in its own namespace, so it can never equal `key` and the
+    // bank can never be served as a finished image. Every request may have local
+    // steps to re-apply, so the lookup is unconditional.
     const rawKey = rawCacheKey(request);
-    if (request.exactSize && rawKey !== key) {
-      const rawHit = await lookupCache(deps.stateDir, rawKey);
-      if (rawHit) {
-        logger.debug(`Raw-bytes hit for ${rawKey.slice(0, 12)}; resizing locally, no quota spent.`);
-        const bytes = await enforceExactSize(rawHit.data, request.exactSize);
-        const artifact = await writeImage(destinationFor(0), bytes, writeOptions);
-        // Index the resized result under the full key so the next run is a plain hit.
-        await storeCache(deps.stateDir, key, artifact, bytes, provenanceOf(rawHit.entry));
-        return finishFromCache(artifact, rawHit.entry);
-      }
+    const rawHit = await lookupCache(deps.stateDir, rawKey);
+    if (rawHit) {
+      logger.debug(`Raw-bytes hit for ${rawKey.slice(0, 12)}; re-processing locally, no quota spent.`);
+      // The SAME function the fresh path uses. A recovered image and a freshly
+      // generated one must be byte-identical, or the cache is lying about what it
+      // holds.
+      const bytes = await postProcess(rawHit.data, request, warnAlways);
+      const artifact = await withDimensions(
+        await writeImage(destinationFor(0), bytes, writeOptions),
+        bytes,
+      );
+      // Index the processed result under the full key so the next run is a plain hit.
+      await storeCache(deps.stateDir, key, artifact, bytes, provenanceOf(rawHit.entry));
+      return finishFromCache(artifact, rawHit.entry);
     }
   }
 
@@ -372,9 +462,12 @@ async function runGeneration(
       });
     }
 
-    const bytes = request.exactSize ? await enforceExactSize(raw, request.exactSize) : raw;
+    const bytes = await postProcess(raw, request, warnAlways);
 
-    const artifact = await writeImage(destinationFor(index), bytes, writeOptions);
+    const artifact = await withDimensions(
+      await writeImage(destinationFor(index), bytes, writeOptions),
+      bytes,
+    );
     await writeManifest(artifact.path, {
       prompt: request.prompt,
       effectivePrompt: result.effectivePrompt,

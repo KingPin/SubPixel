@@ -3,7 +3,7 @@ import { authPath, decodeJwtExp, isExpired, readAuth } from "../auth/read.js";
 import { findOnPath } from "../core/fsx.js";
 import { modelCachePath, resolveModel } from "../providers/models.js";
 import { formatQuota, isQuotaStale, loadQuota, shouldWarn } from "../providers/quota.js";
-import { sharpAvailable } from "../engine/output.js";
+import { sharpAvailable } from "../engine/sharpx.js";
 import { loadConfig } from "../config/load.js";
 
 export const TOS_NOTICE =

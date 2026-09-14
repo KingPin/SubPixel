@@ -9,7 +9,10 @@ import {
   ModelUnavailable,
 } from "../../src/core/errors.js";
 import { emit } from "../../src/engine/emit.js";
-import { generate } from "../../src/engine/generate.js";
+import { generate, rawCacheKey } from "../../src/engine/generate.js";
+import { cacheKey } from "../../src/engine/cache.js";
+import { sharpAvailable } from "../../src/engine/sharpx.js";
+import { tinyPng } from "../fixtures/tiny.png.js";
 import { silentLogger } from "../../src/core/logger.js";
 
 let dir: string;
@@ -63,7 +66,10 @@ describe("generate", () => {
       await readFile(`${result.images[0]!.path}.json`, "utf8"),
     ) as Record<string, unknown>;
     expect(manifest.model).toBe("model-a");
-    expect((await readdir(join(stateDir, "cache"))).length).toBe(1);
+    // Two entries: the raw bank and the finished result. They live in different key
+    // namespaces on purpose, so the unprocessed bytes can never be served as a
+    // finished image.
+    expect((await readdir(join(stateDir, "cache"))).length).toBe(2);
   });
 
   it("serves a repeat request from cache without calling the backend", async () => {
@@ -119,13 +125,25 @@ describe("generate", () => {
     await expect(readFile(`${hit.images[0]!.path}.json`, "utf8")).resolves.toContain("model-a");
   });
 
-  it("does not perform a second lookup when there is no exact size", async () => {
-    // Without --exact-size the raw key IS the full key, so a second lookup would be
-    // a guaranteed second miss on every cold request.
+  it("never produces a raw key equal to the processed key", () => {
+    // The plain request — no exactSize, no format — is the case where the two keys
+    // used to coincide, which made the bank of unprocessed bytes a cache hit that
+    // served a half-finished image.
+    const base = { prompt: "a fox" };
+    expect(rawCacheKey(base)).not.toBe(cacheKey(base));
+    expect(rawCacheKey({ ...base, exactSize: "40x30" })).not.toBe(
+      cacheKey({ ...base, exactSize: "40x30" }),
+    );
+  });
+
+  it("banks the raw bytes beside the finished result, under its own key", async () => {
     const provider = vi.fn(okProvider);
-    const result = await generate({ prompt: "a fox" }, deps(provider));
+    const request = { prompt: "a fox" };
+    const result = await generate(request, deps(provider));
     expect(result.cached).toBe(false);
-    expect((await readdir(join(stateDir, "cache"))).length).toBe(1);
+    const entries = await readdir(join(stateDir, "cache"));
+    expect(entries).toContain(`${rawCacheKey(request)}.json`);
+    expect(entries).toContain(`${cacheKey(request)}.json`);
   });
 
   it("bypasses the lookup with noCache but still stores the result", async () => {
@@ -531,5 +549,57 @@ describe.runIf(sharpAvailable)("recovering banked raw bytes", () => {
     expect(result.images).toHaveLength(1);
     await expect(readFile(result.images[0]!.path)).resolves.toHaveLength(PNG.length);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("could not be added to the cache"));
+  });
+});
+
+describe.runIf(await sharpAvailable())("pixel dimensions", () => {
+  const realProvider = async () => ({
+    images: [tinyPng()],
+    model: "model-a",
+    effectivePrompt: "a fox",
+  });
+
+  it("records them on a freshly generated artifact", async () => {
+    const result = await generate({ prompt: "a fox" }, deps(realProvider));
+    expect(result.images[0]!.width).toBe(8);
+    expect(result.images[0]!.height).toBe(8);
+  });
+
+  it("records them on a cache hit too", async () => {
+    await generate({ prompt: "a fox" }, deps(realProvider));
+    const hit = await generate({ prompt: "a fox" }, deps(realProvider));
+    expect(hit.cached).toBe(true);
+    expect(hit.images[0]!.width).toBe(8);
+  });
+
+  it("converts the primary image to the declared --format", async () => {
+    // The backend answers PNG. A declared `webp` is a promise about the FILE, so a
+    // .png here would make an assets.yml entry permanently stale.
+    const result = await generate({ prompt: "a fox", format: "webp" }, deps(realProvider));
+    expect(result.images[0]!.path.endsWith(".webp")).toBe(true);
+    expect(result.images[0]!.format).toBe("webp");
+  });
+
+  it("re-processes banked raw bytes rather than serving them", async () => {
+    // Bank the raw bytes by failing the publish, then ask for the same picture with
+    // a local step that must run. A provider that throws proves no second purchase.
+    const blocker = join(dir, "blocker");
+    await writeFile(blocker, "not a directory", "utf8");
+    await expect(
+      generate(
+        { prompt: "a fox", exactSize: "4x2", outputPath: join(blocker, "out.png") },
+        deps(realProvider),
+      ),
+    ).rejects.toThrow();
+
+    const recovered = await generate(
+      { prompt: "a fox", exactSize: "4x2" },
+      deps(() => {
+        throw new Error("must not call the backend");
+      }),
+    );
+    expect(recovered.cached).toBe(true);
+    expect(recovered.images[0]!.width).toBe(4);
+    expect(recovered.images[0]!.height).toBe(2);
   });
 });

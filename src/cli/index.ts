@@ -7,6 +7,7 @@ import { collectDoctorReport, formatDoctorReport } from "./doctor.js";
 import { collectModelReport, formatModelReport } from "./models.js";
 import { runEdit } from "./edit.js";
 import { runGenerate } from "./generate.js";
+import { runIcons } from "./icons.js";
 import { normalizeArgv } from "./options.js";
 import { collectStyleReport, formatStyleReport } from "./styles.js";
 import { loadConfig } from "../config/load.js";
@@ -113,6 +114,15 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option("-v, --verbose", "verbose logging on stderr")
     .option("-q, --quiet", "errors only on stderr")
     .action(runGenerate);
+
+  program
+    .command("icons")
+    .argument("<image>", "the source image, ideally square and at least 512 pixels")
+    .description("Build a favicon and PWA icon pack from an existing image")
+    .option("--out-dir <dir>", "where to write the pack", "icons")
+    .option("--overwrite", "replace an existing pack")
+    .option("--json", "emit a single JSON object on stdout")
+    .action(runIcons);
 
   program
     .command("edit")

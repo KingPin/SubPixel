@@ -133,6 +133,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option("--json", "emit the result as JSON on stdout")
     .option("-v, --verbose", "verbose logging on stderr")
     .option("-q, --quiet", "errors only on stderr")
+    .option("--check", "exit 6 if any asset is out of date; makes no network calls")
     .action(runSync);
 
   program

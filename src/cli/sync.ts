@@ -4,6 +4,10 @@ import { syncAssets, type SyncOutcome } from "../assets/sync.js";
 import { logLevelFor } from "./generate.js";
 import { createLogger } from "../core/logger.js";
 import { redact } from "../core/redact.js";
+import { ConfigError, DriftDetected } from "../core/errors.js";
+import { diskProbe, hasDrift, planAssets, type AssetProbe, type AssetStatus } from "../assets/plan.js";
+import type { ProviderFn } from "../engine/generate.js";
+import type { LoadedAssets } from "../assets/load.js";
 import type { BackendName } from "../core/types.js";
 
 export interface SyncOptions {
@@ -16,12 +20,82 @@ export interface SyncOptions {
   json?: boolean;
   quiet?: boolean;
   verbose?: boolean;
+  check?: boolean;
+  /** Test seam only. The CLI never sets this; `--check` must never read it. */
+  provider?: ProviderFn;
+}
+
+export function formatDriftReport(statuses: readonly AssetStatus[]): string {
+  return statuses
+    .filter((status) => status.state !== "current")
+    .map((status) => `${status.state}: ${status.id} — ${status.reason}`)
+    .join("\n");
+}
+
+/**
+ * The CI gate. Reads the manifests and compares. It does NOT throw on drift.
+ *
+ * There is no provider parameter and no generation deps anywhere in this function.
+ * That absence is the feature: a build running this on every pull request must not
+ * be able to spend a developer's subscription quota, and the cheapest way to
+ * guarantee that is to give the code path nothing to spend it with.
+ */
+export async function checkAssets(
+  loaded: LoadedAssets,
+  probe: AssetProbe = diskProbe,
+): Promise<AssetStatus[]> {
+  return planAssets(loaded.assets, probe);
+}
+
+/**
+ * The error for a drifted result, or `undefined` when everything is current.
+ *
+ * Separate from `checkAssets` so the caller can write the report FIRST and throw
+ * second. Throwing from inside the check is what made `--check --json` emit
+ * nothing at all on drift: the JSON document is written after the check returns,
+ * and on the only run where a CI job needs to read it, the check never returned.
+ * An exit code says that something is wrong; the document says what.
+ */
+export function driftError(statuses: readonly AssetStatus[]): DriftDetected | undefined {
+  if (!hasDrift(statuses)) return undefined;
+  const drifted = statuses.filter((status) => status.state !== "current");
+  // Every `reason` was redacted by the planner, so the joined message is safe to
+  // print into a public CI log.
+  return new DriftDetected(
+    `${drifted.length} of ${statuses.length} assets are out of date. Run \`spx sync\`.\n${formatDriftReport(statuses)}`,
+  );
 }
 
 export async function runSync(options: SyncOptions): Promise<void> {
   const path = resolve(options.file ?? ASSETS_FILENAME);
   const warn = (message: string) => process.stderr.write(`spx: ${message}\n`);
   const loaded = await loadAssets(path, warn);
+
+  if (options.check === true) {
+    if (options.force === true) {
+      throw new ConfigError("--check reports drift and --force regenerates. Pass one or the other.");
+    }
+    const statuses = await checkAssets(loaded);
+    const drift = driftError(statuses);
+
+    // Report first, on BOTH paths. stdout carries the machine-readable answer;
+    // stderr carries the human one, so `--json` leaves stdout holding exactly one
+    // document whether or not anything drifted.
+    if (options.json === true) {
+      process.stdout.write(
+        redact(`${JSON.stringify({ drift: drift !== undefined, statuses }, null, 2)}\n`),
+      );
+      if (drift) warn(formatDriftReport(statuses));
+    } else if (drift) {
+      warn(formatDriftReport(statuses));
+    } else if (options.quiet !== true) {
+      process.stdout.write(`${statuses.length} assets are up to date.\n`);
+    }
+
+    // And only now the exit code.
+    if (drift) throw drift;
+    return;
+  }
 
   const outcome = await syncAssets(loaded, {
     force: options.force === true,
@@ -35,6 +109,7 @@ export async function runSync(options: SyncOptions): Promise<void> {
     // --json must leave stdout holding exactly one JSON document, so progress goes
     // to stderr in that mode rather than being suppressed.
     log: options.json === true ? warn : options.quiet === true ? undefined : (line) => process.stdout.write(`${line}\n`),
+    ...(options.provider ? { provider: options.provider } : {}),
     warnAlways: warn,
   });
 

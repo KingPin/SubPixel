@@ -148,6 +148,28 @@ assets:
     expect(provider).toHaveBeenCalledTimes(1);
   });
 
+  it("reports the account-wide failure even when a per-asset one landed first", async () => {
+    const path = await project(`
+assets:
+  - id: a
+    prompt: one
+  - id: b
+    prompt: two
+`);
+    const loaded = await loadAssets(path);
+    // `a` is refused immediately; `b` hits an expired credential a tick later. The
+    // exit code has to say "re-authenticate" (3), not "that prompt was refused" (1).
+    const provider = vi.fn(async (request: { prompt: string }) => {
+      if (request.prompt.startsWith("one")) throw new ContentBlocked("refused");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      throw new AuthExpired("log in again");
+    });
+
+    const outcome = await syncAssets(loaded, { provider, concurrency: 2 });
+    expect(outcome.failure).toBeInstanceOf(AuthExpired);
+    expect(outcome.failures.map((failure) => failure.id).sort()).toEqual(["a", "b"]);
+  });
+
   it("refuses a sync larger than the project budget, before submitting anything", async () => {
     const path = await project(`
 assets:

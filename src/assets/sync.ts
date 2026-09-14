@@ -47,7 +47,10 @@ export interface SyncOutcome {
   failures: SyncFailure[];
   drift: boolean;
   /**
-   * The first real error object, when anything failed. NOT thrown from here.
+   * The error the run should exit with, when anything failed. NOT thrown from here.
+   *
+   * An account-wide failure (`isFatal`) wins over whichever rejection happened
+   * first, because that is the one the exit code has to name.
    *
    * The caller needs both halves of a failed run: the structured report of what
    * did and did not happen, and the error whose `exitCode` the process must end
@@ -193,12 +196,18 @@ export async function syncAssets(loaded: LoadedAssets, deps: SyncDeps = {}): Pro
     }
   }
 
-  if (run.failure !== undefined) {
+  // The ACCOUNT-WIDE failure wins over the first one to land. `run.failure` is
+  // whichever rejection happened first in time, and with concurrency above one a
+  // per-asset ContentBlocked can beat the AuthExpired that stopped the rest of the
+  // run — which would exit 1 and tell CI the prompt was the problem, when the real
+  // answer is "re-authenticate" (3) or "you are rate limited" (4).
+  const failure = fatal ?? run.failure;
+  if (failure !== undefined) {
     log(`${generated.length} generated, ${failures.length} failed, ${skipped.length} up to date.`);
-    // Returned, not thrown. `run.failure` is the real error object — bin.ts reads
-    // `exitCode` off it, and a wrapped Error would collapse every sync failure back
-    // to exit 1 — but throwing it here would take the report down with it.
-    return { statuses, generated, skipped, failures, drift, failure: run.failure };
+    // Returned, not thrown. This is the real error object — bin.ts reads `exitCode`
+    // off it, and a wrapped Error would collapse every sync failure back to exit
+    // 1 — but throwing it here would take the report down with it.
+    return { statuses, generated, skipped, failures, drift, failure };
   }
 
   log(`${generated.length} generated, ${skipped.length} up to date.`);

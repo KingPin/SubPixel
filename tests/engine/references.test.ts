@@ -3,7 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConfigError } from "../../src/core/errors.js";
-import { MAX_REFERENCE_BYTES, loadReference, loadReferences } from "../../src/engine/references.js";
+import {
+  MAX_REFERENCE_BYTES,
+  loadReference,
+  loadReferences,
+  readImageFile,
+} from "../../src/engine/references.js";
 import { TINY_PNG_BASE64 } from "../fixtures/tiny.png.js";
 
 const PNG = Buffer.from(TINY_PNG_BASE64, "base64");
@@ -81,5 +86,24 @@ describe("loadReferences", () => {
       await tempFile("5.png", big),
     ];
     await expect(loadReferences(paths)).rejects.toThrow(/combined/);
+  });
+});
+
+describe("readImageFile", () => {
+  it("accepts a file past the reference transport cap", async () => {
+    // The cap is a property of the base64 request body, not of the file. `spx icons`
+    // resizes locally and sends nothing, so a large master has to be readable.
+    const big = Buffer.concat([PNG, Buffer.alloc(MAX_REFERENCE_BYTES + 1)]);
+    const path = await tempFile("master.png", big);
+    const { format, data } = await readImageFile(path);
+    expect(format).toBe("png");
+    expect(data.length).toBe(big.length);
+    // The transport path still refuses it.
+    await expect(loadReference(path)).rejects.toBeInstanceOf(ConfigError);
+  });
+
+  it("still refuses bytes that are not an image", async () => {
+    const path = await tempFile("notes.png", "plain text");
+    await expect(readImageFile(path)).rejects.toThrow(/not a PNG, JPEG, or WebP/);
   });
 });

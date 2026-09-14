@@ -28,7 +28,15 @@ function mib(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
 }
 
-export async function loadReference(path: string): Promise<LoadedReference> {
+/**
+ * Read an image file and confirm the bytes really are an image.
+ *
+ * No size cap: the caps above are a property of the TRANSPORT, not of the file.
+ * `spx icons` never sends its source anywhere — it resizes it locally — so a
+ * perfectly good 20 MiB master would otherwise be refused by a limit that exists
+ * to keep a base64 request body under the endpoint's ceiling.
+ */
+export async function readImageFile(path: string): Promise<{ data: Buffer; format: ImageFormat }> {
   let data: Buffer;
   try {
     data = await readFile(path);
@@ -38,17 +46,23 @@ export async function loadReference(path: string): Promise<LoadedReference> {
     );
   }
 
-  if (data.length > MAX_REFERENCE_BYTES) {
-    throw new ConfigError(
-      `Reference image "${path}" is too large: ${mib(data.length)}, cap ${mib(MAX_REFERENCE_BYTES)}.`,
-    );
-  }
-
   const format = sniffFormat(data);
   if (!format) {
     throw new ConfigError(
       `Reference image "${basename(path)}" is not a PNG, JPEG, or WebP. subpixel reads the file's ` +
         "leading bytes rather than its extension, so a renamed file fails here.",
+    );
+  }
+
+  return { data, format };
+}
+
+export async function loadReference(path: string): Promise<LoadedReference> {
+  const { data, format } = await readImageFile(path);
+
+  if (data.length > MAX_REFERENCE_BYTES) {
+    throw new ConfigError(
+      `Reference image "${path}" is too large: ${mib(data.length)}, cap ${mib(MAX_REFERENCE_BYTES)}.`,
     );
   }
 

@@ -4,7 +4,7 @@ import { OutputError } from "../core/errors.js";
 import { atomicPublish } from "../core/fsx.js";
 import { redact } from "../core/redact.js";
 import { ICON_SNIPPET, MANIFEST_SNIPPET, buildIconPack } from "../engine/icons.js";
-import { loadReference } from "../engine/references.js";
+import { readImageFile } from "../engine/references.js";
 
 export interface IconsCliOptions {
   outDir?: string;
@@ -15,11 +15,12 @@ export interface IconsCliOptions {
 export async function runIcons(source: string, options: IconsCliOptions): Promise<void> {
   const warn = (message: string) => process.stderr.write(`warning: ${redact(message)}\n`);
 
-  // `loadReference` already reads, sniffs, and size-caps an image, and produces the
-  // same error messages the rest of the tool produces. A second reader here would
-  // only be a second place for "that is not a PNG" to be worded differently.
-  const image = await loadReference(resolve(source));
-  const bytes = Buffer.from(image.dataUrl.split(",", 2)[1] ?? "", "base64");
+  // `readImageFile` reads and sniffs with the same wording the rest of the tool
+  // uses, without the 12 MiB reference cap. That cap exists because a reference
+  // travels base64-encoded inside a request body; an icon source never leaves this
+  // machine, so a valid high-resolution master must not be refused by it.
+  const sourcePath = resolve(source);
+  const { data: bytes } = await readImageFile(sourcePath);
 
   const outDir = resolve(options.outDir ?? "icons");
   const files = await buildIconPack(bytes, warn);
@@ -39,7 +40,7 @@ export async function runIcons(source: string, options: IconsCliOptions): Promis
 
   if (options.json) {
     process.stdout.write(
-      `${redact(JSON.stringify({ source: image.path, files: written }, null, 2))}\n`,
+      `${redact(JSON.stringify({ source: sourcePath, files: written }, null, 2))}\n`,
     );
     return;
   }

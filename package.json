@@ -10,7 +10,7 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=24.0.0"
   },
   "bin": {
     "spx": "dist/cli/bin.js",
@@ -32,8 +32,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "commander": "^12.1.0",
-    "yaml": "^2.5.1"
+    "commander": "^15.0.0",
+    "yaml": "^2.9.1"
   },
   "peerDependencies": {
     "sharp": "^0.33.0"
@@ -44,9 +44,9 @@
     }
   },
   "devDependencies": {
-    "@types/node": "^20.16.0",
+    "@types/node": "^24.10.1",
     "sharp": "^0.35.4",
-    "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
   }
 }

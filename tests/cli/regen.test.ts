@@ -50,6 +50,27 @@ beforeEach(async () => {
 });
 
 describe("spx regen", () => {
+  it("replays the backend the manifest recorded, unless a flag says otherwise", async () => {
+    // Without this, the driver comes from whatever the project config says today.
+    // A replay that quietly changes backends is not replaying the recorded request.
+    const image = join(dir, "fox.png");
+    await writeFile(image, tinyPng());
+    await writeManifest(image, { ...ENTRY, backend: "codex-exec" });
+    generatedAt(image);
+
+    silence();
+    try {
+      await runRegen(image, {});
+      expect(generate.mock.calls[0]?.[1]).toMatchObject({ backend: "codex-exec" });
+
+      generate.mockClear();
+      await runRegen(image, { backend: "codex-http" });
+      expect(generate.mock.calls[0]?.[1]).toMatchObject({ backend: "codex-http" });
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
   it("replays the recorded request, without the cache and over the original", async () => {
     const image = join(dir, "fox.png");
     await writeFile(image, tinyPng());

@@ -95,6 +95,10 @@ export async function runRegen(image: string, options: RegenCliOptions): Promise
     // for the same request — and it writes over the image it replayed rather than
     // dropping a `-v2` sibling beside it. `--force` is exactly those two decisions.
     force: true,
-    backend: options.backend,
+    // The manifest records the backend that actually produced the image, and a
+    // replay that silently picks a different driver is not a replay. Without the
+    // flag, `resolveGenerateDeps` would fall back to whatever this project's config
+    // says today, which may have changed since the image was made.
+    backend: options.backend ?? manifest.backend,
   });
 }

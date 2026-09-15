@@ -113,6 +113,23 @@ describe("applyInit", () => {
     };
     expect(doc.mcpServers.subpixel).toBeDefined();
   });
+
+  it("keeps unrelated servers under --force when the file parses fine", async () => {
+    // --force clears a conflict. It is not "rewrite every target from scratch": a
+    // parseable config still merges, or the flag silently deletes a colleague's
+    // servers on the way to fixing one unparseable file elsewhere.
+    await writeFile(
+      join(cwd, ".mcp.json"),
+      JSON.stringify({ mcpServers: { other: { command: "echo" } } }, null, 2),
+    );
+
+    await applyInit(await planInit({ cwd, home, env, force: true }));
+
+    const doc = JSON.parse(await readFile(join(cwd, ".mcp.json"), "utf8")) as {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(Object.keys(doc.mcpServers).sort()).toEqual(["other", "subpixel"]);
+  });
 });
 
 describe("formatInitPlan", () => {

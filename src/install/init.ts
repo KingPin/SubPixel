@@ -67,13 +67,19 @@ async function planTarget(writer: Writer, ctx: InitContext, force: boolean): Pro
 
   let content: string;
   try {
+    content = writer.write(existing, ctx);
+  } catch (err) {
+    if (!(err instanceof SubpixelError)) throw err;
     // --force is expressed as "there is nothing there", which is the whole of what
     // force means: regenerate from scratch rather than merge into content we could
     // not parse. It is deliberately NOT a second code path.
-    content = writer.write(force ? undefined : existing, ctx);
-  } catch (err) {
-    if (err instanceof SubpixelError) return { ...base, state: "conflict", reason: err.message };
-    throw err;
+    //
+    // And it applies ONLY once the merge has actually failed. Forcing before the
+    // attempt made `--force` mean "rewrite every target from scratch", which drops
+    // unrelated servers from a perfectly parseable `.mcp.json` and replaces hand
+    // written `AGENTS.md` prose — neither of which the flag promises.
+    if (!force) return { ...base, state: "conflict", reason: err.message };
+    content = writer.write(undefined, ctx);
   }
 
   if (content === existing) return { ...base, state: "unchanged", content };

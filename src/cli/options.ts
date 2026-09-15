@@ -11,6 +11,7 @@ export const KNOWN_COMMANDS = [
   "sync",
   "regen",
   "mcp",
+  "init",
   "help",
 ] as const;
 

@@ -40,6 +40,18 @@ export interface Writer {
   /** Absolute destination path for this context. */
   path(ctx: InitContext): string;
   /**
+   * A path whose existence means this harness is installed.
+   *
+   * `init` skips a target whose marker is missing, because a config written for a
+   * harness the user does not have is a file they never asked for in a directory
+   * they do not recognise. Writers with no marker are the baseline every project
+   * gets: they live in the project itself and cost nothing to carry.
+   *
+   * The marker is a path rather than a predicate so that writers stay pure — the
+   * filesystem is `init.ts`'s job.
+   */
+  marker?(ctx: InitContext): string;
+  /**
    * Merge our entry into `existing` and return the whole file.
    *
    * `existing` is `undefined` when the file is absent — and also when the caller
@@ -132,8 +144,8 @@ do not download a stock photo, and do not leave a placeholder.
 - Before the first run: \`npx subpixel doctor\`. It exits 1 and names the problem when
   the ChatGPT credentials are missing or expired.
 
-Generation takes one to three minutes. Set the command timeout to the maximum your
-tooling allows and wait. Never re-run a command that appears to have hung — the first
+Generation takes about 30 seconds, and up to 6 minutes on the codex-exec backend.
+Set the command timeout to the maximum your tooling allows and wait. Never re-run a command that appears to have hung — the first
 request may already have been billed. Every run writes a \`.subpixel.json\` manifest
 beside the image; read the image path back from stdout rather than guessing it.
 ${AGENTS_END}`;
@@ -174,6 +186,7 @@ export const WRITERS: Writer[] = [
     // Cursor is the one harness whose field table marks `type` required for stdio.
     // Its examples omit it, so it is tolerated either way — write what the contract asks for.
     id: "cursor",
+    marker: (ctx) => join(ctx.home, ".cursor"),
     title: "Cursor MCP server",
     scope: "project",
     path: (ctx) => join(ctx.cwd, ".cursor", "mcp.json"),
@@ -190,6 +203,7 @@ export const WRITERS: Writer[] = [
     // Launch:      npx -y subpixel mcp
     // Windsurf documents no project-scoped MCP file and has no `type` field at all.
     id: "windsurf",
+    marker: (ctx) => join(ctx.home, ".codeium", "windsurf"),
     title: "Windsurf MCP server",
     scope: "user",
     path: (ctx) => join(ctx.home, ".codeium", "windsurf", "mcp_config.json"),
@@ -207,6 +221,7 @@ export const WRITERS: Writer[] = [
     // config under ~/.cline/, and the globalStorage copy is now only a migration
     // source. The path is homedir-based, so it is the same on every platform.
     id: "cline",
+    marker: (ctx) => join(ctx.home, ".cline"),
     title: "Cline MCP server",
     scope: "user",
     path: (ctx) => join(ctx.home, ".cline", "data", "settings", "cline_mcp_settings.json"),
@@ -230,6 +245,7 @@ export const WRITERS: Writer[] = [
     // reported as a conflict rather than merged, which is the right answer: writing
     // it back as plain JSON would delete the comments.
     id: "kilo",
+    marker: (ctx) => join(ctx.xdgConfigHome ?? join(ctx.home, ".config"), "kilo"),
     title: "Kilo Code MCP server",
     scope: "user",
     path: (ctx) => join(ctx.xdgConfigHome ?? join(ctx.home, ".config"), "kilo", "kilo.jsonc"),

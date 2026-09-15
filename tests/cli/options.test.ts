@@ -6,6 +6,7 @@ import {
   parseBackend,
   parseSeconds,
 } from "../../src/cli/options.js";
+import { buildProgram } from "../../src/cli/index.js";
 
 describe("normalizeArgv", () => {
   it("inserts generate before a bare prompt", () => {
@@ -80,5 +81,17 @@ describe("parseSeconds", () => {
   it("rejects zero and negative values", () => {
     expect(() => parseSeconds("0", "--stall-timeout")).toThrow(ConfigError);
     expect(() => parseSeconds("-5", "--stall-timeout")).toThrow(ConfigError);
+  });
+});
+
+describe("KNOWN_COMMANDS", () => {
+  it("matches the commands actually registered on the program", async () => {
+    // This list is the ONLY thing standing between a new command and `spx init`
+    // being silently rewritten to `spx generate init` — a command name missing from
+    // it is not a crash, it is a prompt sent to the image model. There is no way to
+    // notice that by reading either file, so it is asserted here.
+    const registered = (await buildProgram()).commands.map((command) => command.name());
+    // `help` is commander's, not ours, and has no entry in `program.commands`.
+    expect([...registered, "help"].sort()).toEqual([...KNOWN_COMMANDS].sort());
   });
 });

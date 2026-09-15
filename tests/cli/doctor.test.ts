@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { collectDoctorReport, formatDoctorReport } from "../../src/cli/doctor.js";
+import { applyInit, planInit } from "../../src/install/init.js";
 
 let home: string;
 
@@ -148,5 +149,51 @@ describe("collectDoctorReport quota reporting", () => {
     const report = await collectDoctorReport(await baseOptions(quotaPath));
     expect(report.quota.summary).toContain("unknown");
     expect(report.ok).toBe(true);
+  });
+});
+
+describe("the install section", () => {
+  /** `home` is a fresh temp dir, so no optional harness is detected. */
+  async function report(cwd: string) {
+    return collectDoctorReport({
+      cwd,
+      home,
+      env: {},
+      authPath: await seedAuth(),
+      cachePath: join(home, "missing.json"),
+      quotaPath: join(home, "absent.json"),
+    });
+  }
+
+  it("names the harnesses still waiting for `spx init`", async () => {
+    const fresh = await mkdtemp(join(tmpdir(), "subpixel-doctor-init-"));
+    const result = await report(fresh);
+    expect(result.install.ok).toBe(false);
+    expect(result.install.pending).toContain("claude-mcp");
+    // An absent harness is not pending. Nagging about Windsurf on a machine without
+    // Windsurf is how a FAIL line stops being read.
+    expect(result.install.pending).not.toContain("windsurf");
+    expect(formatDoctorReport(result)).toContain("run `spx init` for");
+  });
+
+  it("goes quiet once init has been run", async () => {
+    const tree = await mkdtemp(join(tmpdir(), "subpixel-doctor-init-"));
+    await applyInit(await planInit({ cwd: tree, home, env: {} }));
+    const result = await report(tree);
+    expect(result.install.ok).toBe(true);
+    expect(result.install.pending).toEqual([]);
+    expect(result.install.configured).toContain("claude-mcp");
+  });
+
+  it("does not let a missing harness config fail the whole report", async () => {
+    const fresh = await mkdtemp(join(tmpdir(), "subpixel-doctor-init-"));
+    // `ok` means "can this machine generate an image", and an unconfigured editor
+    // cannot stop that. Only the install line goes red.
+    expect((await report(fresh)).ok).toBe(true);
+  });
+
+  it("counts the tools `spx mcp` declares", async () => {
+    const fresh = await mkdtemp(join(tmpdir(), "subpixel-doctor-init-"));
+    expect((await report(fresh)).mcp.tools).toBeGreaterThan(0);
   });
 });

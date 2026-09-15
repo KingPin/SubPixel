@@ -1,0 +1,160 @@
+import { readFile, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { atomicWrite } from "../core/fsx.js";
+import { SubpixelError } from "../core/errors.js";
+import { WRITERS, type InitContext, type Scope, type Writer } from "./writers.js";
+
+/**
+ * What `init` decided about one target.
+ *
+ * `absent` and `conflict` are both "nothing was written", but they are different
+ * answers and a user acts on them differently: `absent` means the harness is not
+ * installed, `conflict` means it is and we refused to guess at its config.
+ */
+export type TargetState = "created" | "updated" | "unchanged" | "absent" | "conflict";
+
+export interface TargetPlan {
+  id: string;
+  title: string;
+  scope: Scope;
+  path: string;
+  state: TargetState;
+  /** The file exactly as it would be written. Absent for `absent` and `conflict`. */
+  content?: string;
+  /** Why nothing was written. Present for `absent` and `conflict`. */
+  reason?: string;
+}
+
+export interface InitOptions {
+  cwd?: string;
+  home?: string;
+  env?: NodeJS.ProcessEnv;
+  /** Replace a target we could not parse, instead of reporting it and skipping. */
+  force?: boolean;
+  /** The bundled skill text. Read from the package when absent. */
+  skill?: string;
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The `skills/subpixel/SKILL.md` shipped in the package, beside `dist/`. */
+export async function bundledSkill(): Promise<string> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  return readFile(join(here, "..", "..", "skills", "subpixel", "SKILL.md"), "utf8");
+}
+
+async function planTarget(writer: Writer, ctx: InitContext, force: boolean): Promise<TargetPlan> {
+  const base = { id: writer.id, title: writer.title, scope: writer.scope, path: writer.path(ctx) };
+
+  const marker = writer.marker?.(ctx);
+  if (marker !== undefined && !(await pathExists(marker))) {
+    return { ...base, state: "absent", reason: `${marker} does not exist` };
+  }
+
+  // A read failure is treated as "no file". The only reason to distinguish an
+  // unreadable file from a missing one here is to report it, and the write that
+  // follows will report it far more precisely than a guess at this point could.
+  const existing = await readFile(base.path, "utf8").catch(() => undefined);
+
+  let content: string;
+  try {
+    // --force is expressed as "there is nothing there", which is the whole of what
+    // force means: regenerate from scratch rather than merge into content we could
+    // not parse. It is deliberately NOT a second code path.
+    content = writer.write(force ? undefined : existing, ctx);
+  } catch (err) {
+    if (err instanceof SubpixelError) return { ...base, state: "conflict", reason: err.message };
+    throw err;
+  }
+
+  if (content === existing) return { ...base, state: "unchanged", content };
+  return { ...base, state: existing === undefined ? "created" : "updated", content };
+}
+
+/** Decide what every target needs. Reads the filesystem; writes nothing. */
+export async function planInit(options: InitOptions = {}): Promise<TargetPlan[]> {
+  const env = options.env ?? process.env;
+  const ctx: InitContext = {
+    cwd: options.cwd ?? process.cwd(),
+    home: options.home ?? homedir(),
+    skill: options.skill ?? (await bundledSkill()),
+    ...(env.XDG_CONFIG_HOME ? { xdgConfigHome: env.XDG_CONFIG_HOME } : {}),
+  };
+  return Promise.all(WRITERS.map((writer) => planTarget(writer, ctx, options.force === true)));
+}
+
+/** Write the targets that need writing. Returns the ones that were written. */
+export async function applyInit(plan: TargetPlan[]): Promise<TargetPlan[]> {
+  const pending = plan.filter(
+    (target) => target.state === "created" || target.state === "updated",
+  );
+  for (const target of pending) {
+    await atomicWrite(target.path, target.content!);
+  }
+  return pending;
+}
+
+const VERBS: Record<TargetState, string> = {
+  created: "create",
+  updated: "update",
+  unchanged: "already current",
+  absent: "not installed",
+  conflict: "CONFLICT",
+};
+
+/**
+ * Render the plan for a human.
+ *
+ * A dry run prints each changed file in full rather than a line diff. The files are
+ * a few lines of JSON, so the whole thing fits on a screen, and a merged config is
+ * exactly the kind of output where a diff hides the one line that matters — the
+ * launch command — inside context the reader skims.
+ */
+export function formatInitPlan(plan: TargetPlan[], dryRun: boolean): string {
+  const lines: string[] = [];
+  if (dryRun) lines.push("Dry run. Nothing was written.", "");
+
+  for (const target of plan) {
+    lines.push(`${VERBS[target.state].padEnd(14)} ${target.path}  (${target.title})`);
+    if (target.reason !== undefined) lines.push(`               ${target.reason}`);
+  }
+
+  const conflicts = plan.filter((target) => target.state === "conflict");
+  if (conflicts.length > 0) {
+    lines.push("", "Nothing was written to the files above. Re-run with --force to replace them.");
+  }
+
+  if (dryRun) {
+    for (const target of plan) {
+      if (target.state !== "created" && target.state !== "updated") continue;
+      lines.push("", `--- ${target.path}`, target.content!.replace(/\n$/, ""));
+    }
+  }
+
+  // A user-scoped config has no project to belong to, so the server it launches runs
+  // wherever the host runs. Said here because it is the one thing about `init` that
+  // surprises people: the Windsurf entry is not "this project", it is "every project".
+  if (plan.some((target) => target.scope === "user" && target.state !== "absent")) {
+    lines.push(
+      "",
+      "The user-scoped entries above apply to every project you open in that harness.",
+      "The server reads whichever subpixel.config.* and assets.yml sit in the directory the host runs from.",
+    );
+  }
+
+  return lines.join("\n");
+}
+
+/** True when every target that could be configured already is. Used by `spx doctor`. */
+export function initIsCurrent(plan: TargetPlan[]): boolean {
+  return plan.every((target) => target.state === "unchanged" || target.state === "absent");
+}

@@ -5,6 +5,7 @@ import { collectModelReport, formatModelReport } from "./models.js";
 import { runEdit } from "./edit.js";
 import { runGenerate } from "./generate.js";
 import { runIcons } from "./icons.js";
+import { runInit } from "./init.js";
 import { runMcp } from "./mcp.js";
 import { runRegen } from "./regen.js";
 import { runSync } from "./sync.js";
@@ -188,6 +189,13 @@ export async function buildProgram(): Promise<Command> {
     .option("-v, --verbose", "verbose logging on stderr")
     .option("-q, --quiet", "errors only on stderr")
     .action(runEdit);
+
+  program
+    .command("init")
+    .description("Write the subpixel skill and MCP server config for the agent harnesses on this machine")
+    .option("--dry-run", "render every file that would be written, and write nothing")
+    .option("--force", "replace a config file that could not be parsed, instead of skipping it")
+    .action(runInit);
 
   program
     .command("mcp")

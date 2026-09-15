@@ -66,7 +66,8 @@ export interface ToolDefinition {
  *
  * The paid OpenAI backend spends money from a different purse than the ChatGPT
  * subscription, and a host picking a backend from a dropdown has no way to know
- * that. It stays a CLI-only choice behind `--allow-paid`.
+ * that. No provider implements it yet either, so the value would only ever
+ * resolve to an error.
  */
 const BACKEND_VALUES = ["codex-http", "codex-exec", "auto"] as const;
 

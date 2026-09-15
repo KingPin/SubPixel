@@ -16,7 +16,6 @@ export interface SubpixelConfig {
   /** The style applied when `--style` is absent. */
   style?: string;
   backend?: BackendName | "auto";
-  allowPaid?: boolean;
   concurrency?: number;
   budget?: { maxImagesPerRun?: number };
   /**
@@ -36,7 +35,6 @@ const CONFIG_KEYS = [
   "format",
   "style",
   "backend",
-  "allowPaid",
   "concurrency",
   "budget",
   "mcp",
@@ -135,10 +133,6 @@ export function validateConfig(
   if (input.format !== undefined) config.format = asEnum(input.format, FORMATS, source, "format");
   if (input.backend !== undefined) {
     config.backend = asEnum(input.backend, BACKENDS, source, "backend") as BackendName | "auto";
-  }
-  if (input.allowPaid !== undefined) {
-    if (typeof input.allowPaid !== "boolean") fail(source, "allowPaid", "a boolean", input.allowPaid);
-    config.allowPaid = input.allowPaid;
   }
   if (input.concurrency !== undefined) {
     config.concurrency = asPositiveInt(input.concurrency, source, "concurrency");

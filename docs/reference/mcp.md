@@ -135,8 +135,9 @@ is the one that is guaranteed, and it needs `sharp`.
 asked for eight of them is a tool that will be. There is no cache-bypass argument for
 the same reason: an agent that can retry for free will.
 
-`backend` does not accept `api`. The paid OpenAI backend is never selectable from a
-tool call; it is a deliberate, local decision made with `--allow-paid` on the CLI.
+`backend` does not accept `api`. The paid OpenAI backend is not implemented in this
+release, on any surface. When it ships it will be a deliberate, local CLI decision,
+never a value a host can pick from a tool schema.
 
 ### edit_image
 

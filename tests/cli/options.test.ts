@@ -55,7 +55,10 @@ describe("parseBackend", () => {
   it("passes a real backend name through", () => {
     expect(parseBackend("codex-http")).toBe("codex-http");
     expect(parseBackend("codex-exec")).toBe("codex-exec");
-    expect(parseBackend("api")).toBe("api");
+  });
+
+  it("rejects the paid backend, which no provider implements yet", () => {
+    expect(() => parseBackend("api")).toThrow(ConfigError);
   });
 
   it("rejects an unknown name and lists the valid ones", () => {

@@ -26,7 +26,7 @@ describe("resolveChain", () => {
   });
 
   it("never includes the paid backend by default", () => {
-    expect(resolveChain({ hasCodexBinary: true, allowPaid: true })).not.toContain("api");
+    expect(resolveChain({ hasCodexBinary: true })).not.toContain("api");
   });
 
   it("drops codex-exec when the binary is missing", () => {
@@ -37,13 +37,15 @@ describe("resolveChain", () => {
     expect(resolveChain({ hasCodexBinary: true, requested: "codex-exec" })).toEqual(["codex-exec"]);
   });
 
-  it("refuses the paid backend without the opt-in flag", () => {
+  it("refuses the paid backend, which no provider implements yet", () => {
+    // The refusal lives in the resolver, not the CLI parser, because the CLI is not
+    // the only way in: a project config may still carry `backend: "api"`. Without
+    // this the chain reaches `runWithFallback` and dies on a missing runner, which
+    // reads as a bug in subpixel rather than a backend that has not shipped.
     expect(() => resolveChain({ hasCodexBinary: true, requested: "api" })).toThrow(ConfigError);
-    expect(() => resolveChain({ hasCodexBinary: true, requested: "api" })).toThrow(/--allow-paid/);
-  });
-
-  it("allows the paid backend when explicitly requested and permitted", () => {
-    expect(resolveChain({ hasCodexBinary: true, requested: "api", allowPaid: true })).toEqual(["api"]);
+    expect(() => resolveChain({ hasCodexBinary: true, requested: "api" })).toThrow(
+      /not implemented yet/,
+    );
   });
 
   it("refuses a pinned codex-exec when the binary is missing", () => {

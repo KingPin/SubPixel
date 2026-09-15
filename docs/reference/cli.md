@@ -45,8 +45,7 @@ spx generate "an isometric analytics dashboard, dark mode" --size 1536x1024 --fo
 | `--overwrite` | Replace an existing output file. |
 | `--no-overwrite` | Write a `-v2` sibling instead of replacing. This is the default; the flag exists to spell it. |
 | `-f, --force` | `--no-cache --overwrite`. |
-| `-b, --backend <name>` | `codex-http`, `codex-exec`, `api`, `auto`. |
-| `--allow-paid` | Permit the paid `api` backend, which spends OpenAI credits. |
+| `-b, --backend <name>` | `codex-http`, `codex-exec`, `auto`. |
 | `--concurrency <n>` | Maximum simultaneous requests. |
 | `--timeout <seconds>` | Whole-request budget, measured from the start of the request. |
 | `--stall-timeout <sec>` | Give up after this many seconds with no stream activity. |
@@ -131,12 +130,11 @@ spx sync --json           # the report as one JSON document, on success and on f
 | `--dry-run` | Report what would be generated and exit without spending quota. |
 | `--concurrency <n>` | Maximum simultaneous requests. Defaults to the config. |
 | `-b, --backend <name>` | Overrides `backend` in the config. |
-| `--allow-paid` | Permit the paid `api` backend. |
 | `--json` | Emit the report as one JSON document on stdout. |
 | `-v, --verbose` / `-q, --quiet` | Log level on stderr. |
 
 `sync` reads the project config as well as the manifest, so `budget.maxImagesPerRun`,
-`backend`, `allowPaid`, and `concurrency` apply to it. A sync whose plan exceeds the
+`backend`, and `concurrency` apply to it. A sync whose plan exceeds the
 budget is refused before anything is submitted.
 
 With `--json`, stdout carries exactly one document whether the run succeeded, drifted,
@@ -235,7 +233,7 @@ too. Relative paths resolve against the config file's own directory, not yours.
 }
 ```
 
-The keys are `outDir`, `format`, `style`, `backend`, `allowPaid`, `concurrency`,
+The keys are `outDir`, `format`, `style`, `backend`, `concurrency`,
 `budget`, and `styles`. There is no `size` key: a project-wide generation size is a
 per-image decision, and `assets.yml` already has `defaults.size`. `style` names the
 style used when `--style` is absent. An unknown key is ignored with a warning, so a

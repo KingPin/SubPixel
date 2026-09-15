@@ -16,7 +16,6 @@ export interface SyncOptions {
   dryRun?: boolean;
   concurrency?: string;
   backend?: string;
-  allowPaid?: boolean;
   json?: boolean;
   quiet?: boolean;
   verbose?: boolean;
@@ -108,7 +107,6 @@ export async function runSync(options: SyncOptions): Promise<void> {
     // literal "auto" is a truthy string the runner registry has no entry for.
     ...(concurrency !== undefined ? { concurrency } : {}),
     ...(backend ? { backend } : {}),
-    ...(options.allowPaid === true ? { allowPaid: true } : {}),
     // Same three-way rule `runGenerate` uses. `logLevelFor` takes only `quiet` and
     // `verbose`, so it reads `SyncOptions` without a cast.
     logger: createLogger({ level: logLevelFor(options) }),

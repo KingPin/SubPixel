@@ -18,7 +18,6 @@ export interface SyncDeps {
   dryRun?: boolean;
   concurrency?: number;
   backend?: BackendName;
-  allowPaid?: boolean;
   timeoutMs?: number;
   stallMs?: number;
   provider?: ProviderFn;
@@ -174,7 +173,6 @@ export async function syncAssets(loaded: LoadedAssets, deps: SyncDeps = {}): Pro
           // may be "auto", which is the engine's own default, so it is passed only
           // when it names a real backend.
           ...(backendFor(deps, config) ? { backend: backendFor(deps, config)! } : {}),
-          ...(deps.allowPaid === true || config.allowPaid === true ? { allowPaid: true } : {}),
           ...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
           ...(deps.stallMs !== undefined ? { stallMs: deps.stallMs } : {}),
           ...(deps.provider ? { provider: deps.provider } : {}),

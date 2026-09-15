@@ -8,21 +8,22 @@ export const DEFAULT_CHAIN: BackendName[] = ["codex-http", "codex-exec"];
 export interface ChainOptions {
   hasCodexBinary: boolean;
   requested?: BackendName;
-  allowPaid?: boolean;
 }
 
 /**
  * Decide which backends may run, in order.
  *
- * "api" is the paid OpenAI API. The entire point of this tool is to avoid
- * spending API credits, so it is never reachable by default. It appears only
- * when the user names it AND passes --allow-paid: two deliberate acts.
+ * "api" is the paid OpenAI API. No provider implements it yet, so it is
+ * refused here rather than further down, where a missing runner reads as an
+ * internal bug. This function is the one chokepoint every caller routes
+ * through — CLI, project config, sync and the library — so the refusal cannot
+ * be walked around by setting a config key.
  */
 export function resolveChain(options: ChainOptions): BackendName[] {
   if (options.requested) {
-    if (options.requested === "api" && !options.allowPaid) {
+    if (options.requested === "api") {
       throw new ConfigError(
-        "The api backend spends paid OpenAI API credits. Pass --allow-paid to confirm.",
+        "The api backend is not implemented yet. Use codex-http or codex-exec.",
       );
     }
     if (options.requested === "codex-exec" && !options.hasCodexBinary) {

@@ -67,7 +67,6 @@ export interface GenerateDeps {
   /** How many images of an `-n` batch may be in flight at once. */
   concurrency?: number;
   backend?: BackendName;
-  allowPaid?: boolean;
   provider?: ProviderFn;
   resolveModelFn?: (options: { override?: string }) => Promise<ResolvedModel>;
   /** Emitted to stderr even under `--quiet`, per the output contract. */
@@ -411,7 +410,6 @@ async function runGeneration(
       const chain = resolveChain({
         hasCodexBinary: await hasCodexBinary(),
         requested: deps.backend,
-        allowPaid: deps.allowPaid,
       });
       const run = await runWithFallback(
         chain,

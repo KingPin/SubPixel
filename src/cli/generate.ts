@@ -55,7 +55,6 @@ export interface SharedCliOptions {
   stallTimeout?: string;
   concurrency?: string;
   backend?: string;
-  allowPaid?: boolean;
   /** Sugar for `--no-cache --overwrite`. The only place the two are combined. */
   force?: boolean;
   /** Print the resolved plan and stop, without a network call or a byte written. */
@@ -165,7 +164,6 @@ export function resolveGenerateDeps(
   const stateDir = join(cwd, ".subpixel");
 
   const backend = parseBackend(options.backend ?? config.backend);
-  const allowPaid = options.allowPaid ?? config.allowPaid;
 
   // Every numeric flag is parsed HERE, above the --dry-run branch, not at the
   // generate() call below it. --dry-run exists to validate the plan before any
@@ -193,7 +191,7 @@ export function resolveGenerateDeps(
   const noCache = options.force === true || options.cache === false;
   const overwrite = options.force === true || options.overwrite === true;
 
-  return { outDir, stateDir, backend, allowPaid, noCache, overwrite, concurrency, stallMs, timeoutMs };
+  return { outDir, stateDir, backend, noCache, overwrite, concurrency, stallMs, timeoutMs };
 }
 
 /**
@@ -208,14 +206,13 @@ export async function runGenerateRequest(
   options: GenerateCliOptions & { config: SubpixelConfig },
 ): Promise<void> {
   const deps = resolveGenerateDeps(request, options);
-  const { outDir, backend, allowPaid, noCache, overwrite } = deps;
+  const { outDir, backend, noCache, overwrite } = deps;
 
   if (options.dryRun) {
     const resolved = await resolveModel({ override: options.model });
     const chain = resolveChain({
       hasCodexBinary: await hasCodexBinary(),
       requested: backend,
-      allowPaid,
     });
     // Read locally, exactly as `generate()` does before it builds the key. Without
     // this the previewed key is a hash of a request with no reference digests in

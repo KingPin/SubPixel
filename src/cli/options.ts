@@ -15,7 +15,7 @@ export const KNOWN_COMMANDS = [
   "help",
 ] as const;
 
-const BACKENDS: BackendName[] = ["codex-http", "codex-exec", "api"];
+const BACKENDS: BackendName[] = ["codex-http", "codex-exec"];
 
 /**
  * Allow `spx "a red fox"` as shorthand for `spx generate "a red fox"`.

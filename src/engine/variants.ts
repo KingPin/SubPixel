@@ -50,6 +50,21 @@ export function parseVariants(spec: string | undefined): VariantSpec[] | undefin
  * (spec §11), because a project that already ships `hero@sm.webp` should be able to
  * adopt subpixel without renaming files across its templates.
  */
+/**
+ * Is this a suffix `variantPath` may safely concatenate into a filename?
+ *
+ * Two ways a suffix escapes: empty makes `variantPath` return the PRIMARY's path,
+ * so the variant overwrites the image it was derived from; a separator or `..`
+ * walks out of the output directory and past the containment check `out` gets.
+ *
+ * Lives here, beside the concatenation it guards, because both the `assets.yml`
+ * schema and the sidecar manifest have to apply the same rule and a second copy of
+ * it is a second chance to get it wrong.
+ */
+export function isSafeVariantSuffix(suffix: string): boolean {
+  return suffix.trim() !== "" && !/[\\/]/.test(suffix) && !suffix.includes("..");
+}
+
 export function variantPath(path: string, width: number, suffix?: string): string {
   const ext = extname(path);
   const stem = ext ? path.slice(0, path.length - ext.length) : path;

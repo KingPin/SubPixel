@@ -134,6 +134,49 @@ describe("the replayable manifest", () => {
     expect((await readManifest(image))?.prompt).toBe("a red fox");
   });
 
+  // A sidecar travels with the image: out of a pull request, a cache, a colleague.
+  // `regen` concatenates its variant suffix into an output path, so these are the
+  // values that must never reach `variantPath`.
+  it.each([
+    ["a suffix that escapes the image directory", { variantSpecs: [{ width: 400, suffix: "../../x" }] }],
+    ["a suffix with a path separator", { variantSpecs: [{ width: 400, suffix: "/etc/x" }] }],
+    ["an empty suffix, which names the primary image", { variantSpecs: [{ width: 400, suffix: "" }] }],
+    ["a fractional width", { variantSpecs: [{ width: 400.5 }] }],
+    ["a negative width", { variantSpecs: [{ width: -400 }] }],
+  ])("rejects %s", async (_name, overrides) => {
+    const image = join(dir, "fox.png");
+    await writeFile(manifestPathFor(image), JSON.stringify({ ...ENTRY, ...overrides }));
+    expect(await readManifest(image)).toBeUndefined();
+  });
+
+  it("accepts a variant spec with a real custom suffix", async () => {
+    const image = join(dir, "fox.png");
+    await writeFile(
+      manifestPathFor(image),
+      JSON.stringify({ ...ENTRY, variantSpecs: [{ width: 400, suffix: "@sm" }] }),
+    );
+    expect((await readManifest(image))?.variantSpecs).toEqual([{ width: 400, suffix: "@sm" }]);
+  });
+
+  // `composeStyleBlock` trims every text field. A non-string there used to reach
+  // replay and throw a raw TypeError instead of "this sidecar is unusable".
+  it.each([
+    ["a non-string style field", { subject: 7 }],
+    ["an unknown quality", { quality: "ultra" }],
+    ["an unknown format", { format: "gif" }],
+  ])("rejects a style with %s", async (_name, style) => {
+    const image = join(dir, "fox.png");
+    await writeFile(manifestPathFor(image), JSON.stringify({ ...ENTRY, style }));
+    expect(await readManifest(image)).toBeUndefined();
+  });
+
+  it("accepts a style whose fields are all well typed", async () => {
+    const image = join(dir, "fox.png");
+    const style = { subject: "a fox", quality: "high", format: "webp" };
+    await writeFile(manifestPathFor(image), JSON.stringify({ ...ENTRY, style }));
+    expect((await readManifest(image))?.style).toEqual(style);
+  });
+
   it("rejects a truncated file rather than replaying half a request", async () => {
     const image = join(dir, "fox.png");
     const full = JSON.stringify(ENTRY, null, 2);

@@ -2,6 +2,7 @@ import { ConfigError } from "../core/errors.js";
 import { redact } from "../core/redact.js";
 import { validateStyle } from "../config/schema.js";
 import { parseSize } from "../engine/prompt.js";
+import { isSafeVariantSuffix } from "../engine/variants.js";
 import type { ImageFormat, ImageQuality, StyleDefinition } from "../core/types.js";
 
 /**
@@ -120,20 +121,13 @@ function validateVariant(value: unknown, source: string, where: string): Variant
   }
   const suffix =
     input.suffix === undefined ? undefined : asString(input.suffix, source, `${where}.suffix`);
-  if (suffix !== undefined) {
-    // An empty suffix makes `variantPath` return the PRIMARY's path, so the variant
-    // overwrites the image it was derived from — with a downscaled copy, on every
-    // sync, until the asset has been resized to nothing.
-    if (suffix.trim() === "") {
-      fail(source, `${where}.suffix`, "a non-empty name fragment", suffix);
-    }
-    // The suffix is concatenated into a filename, not joined as a path. `../..`
-    // in it would walk out of the output directory and past the containment check
-    // that `out` gets, which is the one thing a manifest from a pull request must
-    // never be able to do.
-    if (/[\\/]/.test(suffix) || suffix.includes("..")) {
-      fail(source, `${where}.suffix`, 'a name fragment with no path separators or ".."', suffix);
-    }
+  if (suffix !== undefined && !isSafeVariantSuffix(suffix)) {
+    fail(
+      source,
+      `${where}.suffix`,
+      'a non-empty name fragment with no path separators or ".."',
+      suffix,
+    );
   }
   return suffix === undefined ? { width } : { width, suffix };
 }

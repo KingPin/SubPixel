@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { atomicWrite } from "../core/fsx.js";
 import { redact } from "../core/redact.js";
+import { STYLE_TEXT_FIELDS } from "../core/types.js";
+import { isSafeVariantSuffix } from "./variants.js";
 import type {
   BackendName,
   ImageBackground,
@@ -127,6 +129,7 @@ function optional(value: unknown, ok: (v: unknown) => boolean): boolean {
 
 const isString = (v: unknown): boolean => typeof v === "string";
 const isNumber = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v);
+const isWidth = (v: unknown): boolean => typeof v === "number" && Number.isInteger(v) && v >= 1;
 const isStringArray = (v: unknown): boolean => Array.isArray(v) && v.every(isString);
 const isNumberArray = (v: unknown): boolean => Array.isArray(v) && v.every(isNumber);
 const oneOf =
@@ -134,10 +137,44 @@ const oneOf =
   (v: unknown): boolean =>
     typeof v === "string" && values.includes(v);
 
+/**
+ * The same rules `assets.yml` applies, because the sidecar reaches the same code.
+ *
+ * A sidecar arrives with the image — over a pull request, out of a cache, from a
+ * colleague — and `spx regen` concatenates its suffix straight into an output path.
+ * Accepting a fractional width here only defers the complaint to the resizer;
+ * accepting `../` here writes outside the image's directory.
+ */
 function isVariantSpecArray(value: unknown): boolean {
   return (
     Array.isArray(value) &&
-    value.every((v) => isRecord(v) && isNumber(v.width) && optional(v.suffix, isString))
+    value.every(
+      (v) =>
+        isRecord(v) &&
+        isWidth(v.width) &&
+        optional(v.suffix, (s) => isString(s) && isSafeVariantSuffix(s as string)),
+    )
+  );
+}
+
+/**
+ * Every field of a style, not just the outer object.
+ *
+ * `composeStyleBlock` calls `.trim()` on each text field. A sidecar holding
+ * `{ style: { subject: 7 } }` therefore used to reach replay and throw a raw
+ * `TypeError`, when the honest answer is that the sidecar is unusable.
+ *
+ * Deliberately not `validateStyle` from the config layer: this wants a boolean, and
+ * the engine does not import config.
+ */
+function isStyleDefinition(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    STYLE_TEXT_FIELDS.every((field) => optional(value[field], isString)) &&
+    optional(value.size, isString) &&
+    optional(value.quality, oneOf(QUALITIES)) &&
+    optional(value.background, oneOf(BACKGROUNDS)) &&
+    optional(value.format, oneOf(FORMATS))
   );
 }
 
@@ -147,8 +184,8 @@ function isVariantRecordArray(value: unknown): boolean {
     value.every(
       (v) =>
         isRecord(v) &&
-        isNumber(v.width) &&
-        isNumber(v.height) &&
+        isWidth(v.width) &&
+        isWidth(v.height) &&
         isString(v.path) &&
         isNumber(v.bytes),
     )
@@ -180,7 +217,7 @@ export function isManifestEntry(value: unknown): value is ManifestEntry {
     optional(value.quality, oneOf(QUALITIES)) &&
     optional(value.background, oneOf(BACKGROUNDS)) &&
     optional(value.transparent, (v) => typeof v === "boolean") &&
-    optional(value.style, isRecord) &&
+    optional(value.style, isStyleDefinition) &&
     optional(value.referenceImages, isStringArray) &&
     optional(value.variants, isVariantRecordArray) &&
     optional(value.skippedVariants, isNumberArray) &&

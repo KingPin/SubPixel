@@ -1,0 +1,240 @@
+# The subpixel MCP server
+
+`spx mcp` runs a Model Context Protocol server on stdio. An agent host spawns it; you
+should not need to run it by hand except to debug. It takes no flags — everything it
+needs comes from the project config in the directory it is launched from.
+
+`spx init` writes the config for every harness installed on this machine. The rest of
+this page is what that config contains and what the server does once it is running.
+
+## Setup
+
+The launch command is the same everywhere:
+
+```
+npx -y subpixel mcp
+```
+
+`npx` rather than a bare `subpixel` because the harness spawns the server with its own
+PATH, which for a GUI-launched editor often lacks the user's node version manager
+shims. `-y` because a stdio transport has no terminal on which to answer an install
+prompt.
+
+### Claude Code
+
+`.mcp.json` in the project root, committed with the repository. An entry with no
+`type` is read as stdio.
+
+```json
+{
+  "mcpServers": {
+    "subpixel": { "command": "npx", "args": ["-y", "subpixel", "mcp"] }
+  }
+}
+```
+
+### Cursor
+
+`.cursor/mcp.json` for one project, or `~/.cursor/mcp.json` for every project. Cursor
+is the one host whose field table marks `type` required for stdio.
+
+```json
+{
+  "mcpServers": {
+    "subpixel": { "type": "stdio", "command": "npx", "args": ["-y", "subpixel", "mcp"] }
+  }
+}
+```
+
+### Windsurf
+
+`~/.codeium/windsurf/mcp_config.json`. User-scoped; Windsurf documents no
+project-scoped MCP file. There is no `type` field.
+
+```json
+{
+  "mcpServers": {
+    "subpixel": { "command": "npx", "args": ["-y", "subpixel", "mcp"] }
+  }
+}
+```
+
+### Cline
+
+`~/.cline/data/settings/cline_mcp_settings.json`, shared by the IDE extension, the
+CLI, and the SDK. **Not** the VS Code global-storage file — Cline v4 moved off it, and
+the old path is now only a migration source.
+
+```json
+{
+  "mcpServers": {
+    "subpixel": { "command": "npx", "args": ["-y", "subpixel", "mcp"], "disabled": false }
+  }
+}
+```
+
+### Kilo Code
+
+`${XDG_CONFIG_HOME:-~/.config}/kilo/kilo.jsonc`, or `kilo.jsonc` in the project root.
+Kilo Code v7 moved MCP into the main config file and renamed the shape: the container
+is `mcp`, the transport is `local`, and `command` is the whole argv with no separate
+`args`. An `mcpServers` entry here is read by nothing and reports no error.
+
+```json
+{
+  "mcp": {
+    "subpixel": {
+      "type": "local",
+      "command": ["npx", "-y", "subpixel", "mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+### Harnesses with no MCP support
+
+`spx init` writes an `AGENTS.md` block describing the CLI instead. There is no server
+to configure.
+
+## Working directory
+
+The server inherits the working directory of the host that spawned it, and that
+directory decides everything downstream: which `subpixel.config.*` is in force, which
+`assets.yml` `sync_assets` reads, and which `.subpixel/jobs/` holds the job records.
+
+A project-scoped config therefore needs no `cwd` override — the host is already in the
+project. **A user-scoped config has no project to be in.** The Windsurf, Cline, and
+Kilo Code entries above apply to every project you open, and the server reads whichever
+project the host happens to be running from. If a host runs from your home directory,
+that is the project the server sees.
+
+## Tools
+
+| Tool | Read-only | Spends quota |
+| --- | --- | --- |
+| `generate_image` | no | yes |
+| `edit_image` | no | yes |
+| `sync_assets` | no | yes, unless `check` |
+| `list_styles` | yes | no |
+| `list_models` | yes | no |
+| `get_image_job` | yes | no |
+| `doctor` | yes | no |
+
+### generate_image
+
+Generate an image from a text prompt. `prompt` is required. The optional arguments are
+`reference_images`, `size`, `quality`, `background`, `format`, `exact_size`,
+`transparent`, `variants`, `style`, `model`, `out`, `out_dir`, `backend`, and `n`.
+
+`reference_images` is reference-guided generation, not in-place pixel editing. `size`,
+`quality`, and `background` are best effort on the subscription backend; `exact_size`
+is the one that is guaranteed, and it needs `sharp`.
+
+`n` accepts only 1. Every image costs subscription quota, and a tool that could be
+asked for eight of them is a tool that will be. There is no cache-bypass argument for
+the same reason: an agent that can retry for free will.
+
+`backend` does not accept `api`. The paid OpenAI backend is never selectable from a
+tool call; it is a deliberate, local decision made with `--allow-paid` on the CLI.
+
+### edit_image
+
+Re-generate an existing image against an instruction. `image` and `instruction` are
+required, and the same optional arguments as `generate_image` apply. The source is
+sent as a reference, so the result is a new image in the same spirit rather than the
+original with pixels changed. Details the instruction did not mention can move.
+
+### sync_assets
+
+Generate the assets declared in `assets.yml` that are missing or out of date.
+Arguments: `file`, `check`, `force`, `backend`.
+
+`check: true` reports drift and stops. It makes no network call and spends nothing, so
+it is the safe one to reach for first. `check` and `force` together are refused —
+one reports, the other regenerates.
+
+### list_styles, list_models, doctor
+
+Read-only. No network call, no quota. `doctor` is the one to run first when a
+generation fails: it names the missing credential or dependency directly.
+
+### get_image_job
+
+Read the status of a job started by one of the generating tools. `job_id` is required.
+Status is `running`, `done`, or `failed`.
+
+## The two paths a generation takes
+
+A generation takes about 30 seconds on the HTTP backend and up to 6 minutes on
+`codex-exec`. That is longer than many hosts will hold a tool call open, so the server
+takes one of two paths depending on what the host asked for.
+
+**The host asked for progress.** If the call carries a `progressToken`, the server
+holds the request open and streams `notifications/progress` as the engine reports
+stages. The result comes back on that same call, however long it takes.
+
+The `progress` value is a counter owned by the request, not the engine's image count.
+MCP requires each notification to carry a larger value than the last, and the engine
+is allowed to repeat itself. `total` is deliberately never sent: the engine's total
+counts images while the counter counts notifications, and an honestly indeterminate
+bar is better than one labelled with a denominator from a different unit.
+
+**The host did not.** Without a `progressToken`, the server waits a few seconds — long
+enough that a cache hit returns the image rather than a job — and then returns:
+
+```json
+{
+  "status": "running",
+  "job_id": "…",
+  "tool": "generate_image",
+  "poll": "Call get_image_job with job_id \"…\". Do not retry generate_image."
+}
+```
+
+The cut-over is 5 seconds by default. Set `mcp.cutoverMs` in the project config, or
+`SUBPIXEL_MCP_CUTOVER_MS` in the environment, which wins.
+
+### Poll, do not retry
+
+A tool call that returns a `job_id` has not failed. The work is still running, and the
+first attempt may already have been billed. Call `get_image_job` until it reports
+`done` or `failed`. **Never re-issue the original call** — that buys a second image.
+
+A job lives only as long as the server process that started it. If the host restarts
+the server mid-generation, the orphaned record is marked `failed` on the next startup
+and is never resubmitted, for the same reason: the first attempt may already have cost
+something.
+
+## Errors
+
+A failed tool call comes back as an MCP error result whose text is one JSON document:
+
+```json
+{ "error": { "code": "CONTENT_BLOCKED", "message": "…" } }
+```
+
+The code is the same taxonomy the CLI turns into [exit codes](cli.md#exit-codes):
+
+| Code | Exit code | Meaning |
+| --- | --- | --- |
+| `CONFIG_ERROR` | 2 | A malformed argument, config file, or `assets.yml`. Retrying will not help. |
+| `AUTH_EXPIRED` | 3 | Run `codex login`, then retry. |
+| `RATE_LIMITED` | 4 | Wait. Retrying immediately makes it worse. |
+| `BACKEND_UNAVAILABLE` | 5 | Transient. Safe to retry. |
+| `DRIFT_DETECTED` | 6 | `sync_assets` with `check` found the images behind the manifest. |
+| `CONTENT_BLOCKED` | 1 | The prompt was refused. Change the prompt; retrying is a second charge. |
+| `MODEL_REJECTED` | 1 | The pinned model refused the request. |
+| `MODEL_UNAVAILABLE` | 1 | The pinned model does not exist or is not reachable. |
+| `STREAM_ABORTED` | 1 | The stream ended early. |
+| `SUBMISSION_UNCERTAIN` | 1 | The request may have been submitted. Do not retry blind — check for the file. |
+| `OUTPUT_ERROR` | 1 | The image was generated but could not be written or post-processed. The bytes exist; do not regenerate. |
+| `UNKNOWN` | 1 | Anything that is not a subpixel error. |
+
+Every message is redacted before it leaves the process, so a token pasted into a
+prompt or a path never reaches the host.
+
+## Terms of service
+
+subpixel drives the undocumented `chatgpt.com/backend-api/codex` endpoint using your
+personal ChatGPT subscription. Do not use it to power a public-facing service.

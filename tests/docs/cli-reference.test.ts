@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { validateAssetsFile } from "../../src/assets/schema.js";
+import { KNOWN_COMMANDS } from "../../src/cli/options.js";
 import { validateConfig } from "../../src/config/schema.js";
 import { ICON_PACK } from "../../src/engine/icons.js";
 import { parseSize } from "../../src/engine/prompt.js";
@@ -52,6 +53,13 @@ describe("the CLI reference", () => {
     expect(commands).toContain("--size ");
     for (const match of commands.matchAll(/(?<![-\w])--size (\S+)/g)) {
       expect(() => parseSize(match[1]!), match[0]).not.toThrow();
+    }
+  });
+
+  it("has a section for every command the CLI knows", () => {
+    // `help` is commander's own, and has no section to write.
+    for (const command of KNOWN_COMMANDS.filter((name) => name !== "help")) {
+      expect(DOC, command).toMatch(new RegExp(`^## .*\\b${command}\\b`, "m"));
     }
   });
 

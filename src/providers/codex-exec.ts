@@ -12,6 +12,7 @@ import {
 import { redact } from "../core/redact.js";
 import type { Deadline } from "../core/deadline.js";
 import type { Logger } from "../core/logger.js";
+import { eventSink, type EventSink } from "../core/events.js";
 import type { GenerateRequest } from "../core/types.js";
 import { augmentPrompt } from "../engine/prompt.js";
 import { sha256 } from "../engine/output.js";
@@ -33,6 +34,12 @@ export interface CodexExecOptions {
    */
   deadline?: Deadline;
   logger?: Logger;
+  /**
+   * Progress, for a caller that wants to show it. `codex exec` is opaque while it
+   * runs, so this path emits far fewer events than the HTTP one: the stages it can
+   * observe honestly are "the child started" and "the child finished".
+   */
+  onEvent?: EventSink;
 }
 
 /**
@@ -444,6 +451,9 @@ export async function generateViaCodexExec(
       options.timeoutMs ?? DEFAULT_EXEC_TIMEOUT_MS,
       options.deadline?.remainingMs ?? Number.POSITIVE_INFINITY,
     );
+
+    const emitEvent = eventSink(options.onEvent);
+    emitEvent({ stage: "submitted", message: "codex exec started" });
 
     const child = spawnFn("codex", args, {
       // CODEX_HOME must survive so the child uses the same ChatGPT login.

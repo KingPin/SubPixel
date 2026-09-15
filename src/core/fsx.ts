@@ -426,16 +426,20 @@ async function tryBreakDeadLock(lockPath: string): Promise<void> {
  * kept rather than broken. `EPERM` means the process exists and belongs to someone
  * else; only `ESRCH` proves death.
  */
-function isOwnerDead(record: LockRecord): boolean {
-  if (record.host !== hostname()) return false;
-  if (!Number.isInteger(record.pid) || record.pid <= 0) return false;
-  if (record.pid === process.pid) return false; // Ourselves. Alive by definition.
+export function ownerIsDead(pid: number, host: string): boolean {
+  if (host !== hostname()) return false;
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (pid === process.pid) return false; // Ourselves. Alive by definition.
   try {
-    process.kill(record.pid, 0);
+    process.kill(pid, 0);
     return false;
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === "ESRCH";
   }
+}
+
+function isOwnerDead(record: LockRecord): boolean {
+  return ownerIsDead(record.pid, record.host);
 }
 
 /** Write JSON atomically with a trailing newline. */

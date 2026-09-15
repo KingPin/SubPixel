@@ -68,6 +68,28 @@ Takes exactly one source image and an instruction. Every `generate` flag applies
 except `--image`, `--emit` and `-n`: the source is the positional argument, and
 `edit` writes one image.
 
+## regen
+
+```bash
+spx regen images/hero.png                 # replay the recorded request, new pixels
+spx regen images/hero.png --size 1024x1024
+spx regen images/hero.png --style brand -o images/hero-v2.png
+```
+
+Re-generates an image from the sidecar manifest written beside it — the `.json` file
+`generate`, `edit` and `sync` leave next to every image. The manifest records the
+whole request: prompt, style, reference images, quality, background, transparency,
+the requested variant widths and their names. `regen` replays all of it, ignores the
+cache, and writes over the original.
+
+Reference paths are stored relative to the sidecar, so a replay reads the same files
+whichever directory you run it from. A missing, unparseable, or wrong-shaped
+manifest exits 2 before any quota is spent; it never regenerates from nothing.
+
+Accepted overrides: `--size`, `--style`, `--model`, `--backend`, `-o`. Each beats
+what the manifest recorded. Manifests written before this shape existed replay
+best-effort and say so once on stderr.
+
 ## icons
 
 ```bash
@@ -125,6 +147,56 @@ therefore safe in CI even though the command exits 6.
 it against `assets.yml`, and exits 6 if they disagree. It makes no network calls, so
 it is safe to run on every pull request.
 
+## init
+
+```bash
+spx init              # write the skill and MCP config for the harnesses on this machine
+spx init --dry-run    # print every file that would be written, and write nothing
+spx init --force      # replace a config file that could not be parsed
+```
+
+| Flag | Meaning |
+| --- | --- |
+| `--dry-run` | Render every file that would be written. Writes nothing. |
+| `--force` | Replace a config file that could not be parsed, instead of skipping it. |
+
+`init` writes each harness the file it actually reads:
+
+| Target | Destination | Scope |
+| --- | --- | --- |
+| Claude Code skill | `.claude/skills/subpixel/SKILL.md` | project |
+| Claude Code MCP | `.mcp.json` | project |
+| Cursor | `.cursor/mcp.json` | project |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | user |
+| Cline | `~/.cline/data/settings/cline_mcp_settings.json` | user |
+| Kilo Code | `${XDG_CONFIG_HOME:-~/.config}/kilo/kilo.jsonc` | user |
+| Harnesses with no MCP | `AGENTS.md` | project |
+
+A harness whose config directory does not exist is skipped and reported as "not
+installed". The three project-scoped files with no directory to detect — the skill,
+`.mcp.json`, and `AGENTS.md` — are always written.
+
+Every writer is parse-merge-write. An MCP server someone else configured survives, a
+second run produces a byte-identical file, and a file that cannot be parsed is
+reported as a conflict and left alone. A run with any conflict exits 2.
+
+**A user-scoped entry is not project-scoped.** Windsurf, Cline, and Kilo Code keep one
+MCP config for every project, so the entry `init` writes applies everywhere, and the
+server reads whichever `subpixel.config.*` and `assets.yml` sit in the directory the
+host happens to run from.
+
+## mcp
+
+```bash
+spx mcp    # run the MCP server on stdio, for an agent host to spawn
+```
+
+The server speaks MCP over stdin and stdout. It takes no flags: everything it needs
+comes from the project config in the directory it is launched from. Run it by hand
+only to debug — an agent host spawns it.
+
+See [mcp.md](mcp.md) for the tools, the dual-path generate contract, and per-host setup.
+
 ## doctor and models
 
 ```bash
@@ -134,6 +206,11 @@ spx models              # which driver models spx will try, in order
 spx models --model o3   # show the effect of pinning one
 spx models --json       # the same, as one JSON document
 ```
+
+`doctor` reports two lines about agent setup: how many tools `spx mcp` declares, and
+which harnesses are still waiting for `spx init`. Neither affects the exit code — an
+unconfigured editor cannot stop an image being generated. `doctor` exits 1 only when
+the credentials are unusable.
 
 ## subpixel.config.json
 

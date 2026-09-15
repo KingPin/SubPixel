@@ -13,7 +13,7 @@ import type {
 import type { SubpixelConfig } from "../config/schema.js";
 import { cacheKey } from "../engine/cache.js";
 import { emit, type EmitFormat } from "../engine/emit.js";
-import { generate } from "../engine/generate.js";
+import { generate, type GenerateDeps } from "../engine/generate.js";
 import { augmentPrompt } from "../engine/prompt.js";
 import { loadReferences } from "../engine/references.js";
 import { hasCodexBinary } from "../providers/codex-exec.js";
@@ -141,24 +141,28 @@ export async function runGenerate(prompt: string, options: GenerateCliOptions): 
 }
 
 /**
- * Run an already-built request: budget, dry-run, generate, report.
+ * Turn CLI options and the project config into engine dependencies, writing nothing.
  *
- * Shared by `generate` and `edit`. The two commands differ only in how the request
- * is built; everything after that is identical, and a second copy of it is a second
- * place for `--dry-run` or the budget check to go missing.
+ * The MCP handlers call this too, which is the reason it is separate from
+ * `runGenerateRequest`. Reusing that function whole is not an option: it writes the
+ * result to stdout, and stdout is the MCP transport. Splitting it here also keeps
+ * `budget.maxImagesPerRun` on both paths — the budget is enforced above the engine,
+ * so a handler that called `generate()` directly would spend past the project's own
+ * limit.
  */
-export async function runGenerateRequest(
+export function resolveGenerateDeps(
   request: GenerateRequest,
-  options: GenerateCliOptions & { config: SubpixelConfig },
-): Promise<void> {
+  options: SharedCliOptions & { config: SubpixelConfig; cwd?: string },
+): GenerateDeps {
   const { config } = options;
+  const cwd = options.cwd ?? process.cwd();
 
   // The precedence rule, in one place: a flag the user typed beats the project's
   // config, and the config beats the built-in default. Commander gives `--out-dir`
   // a default of process.cwd(), which would otherwise outrank the config and make
   // the setting dead on arrival, so the default is declared here instead.
-  const outDir = resolve(options.outDir ?? config.outDir ?? process.cwd());
-  const stateDir = join(process.cwd(), ".subpixel");
+  const outDir = resolve(cwd, options.outDir ?? config.outDir ?? cwd);
+  const stateDir = join(cwd, ".subpixel");
 
   const backend = parseBackend(options.backend ?? config.backend);
   const allowPaid = options.allowPaid ?? config.allowPaid;
@@ -188,6 +192,23 @@ export async function runGenerateRequest(
   // and --overwrite still serves a cache hit.
   const noCache = options.force === true || options.cache === false;
   const overwrite = options.force === true || options.overwrite === true;
+
+  return { outDir, stateDir, backend, allowPaid, noCache, overwrite, concurrency, stallMs, timeoutMs };
+}
+
+/**
+ * Run an already-built request: budget, dry-run, generate, report.
+ *
+ * Shared by `generate` and `edit`. The two commands differ only in how the request
+ * is built; everything after that is identical, and a second copy of it is a second
+ * place for `--dry-run` or the budget check to go missing.
+ */
+export async function runGenerateRequest(
+  request: GenerateRequest,
+  options: GenerateCliOptions & { config: SubpixelConfig },
+): Promise<void> {
+  const deps = resolveGenerateDeps(request, options);
+  const { outDir, backend, allowPaid, noCache, overwrite } = deps;
 
   if (options.dryRun) {
     const resolved = await resolveModel({ override: options.model });
@@ -235,15 +256,7 @@ export async function runGenerateRequest(
   }
 
   const result = await generate(request, {
-    outDir,
-    stateDir,
-    backend,
-    allowPaid,
-    noCache,
-    overwrite,
-    concurrency,
-    stallMs,
-    timeoutMs,
+    ...deps,
     logger: createLogger({ level: logLevelFor(options) }),
     // Format mismatches and sibling redirects survive --quiet, per the spec's
     // "never lie about bytes" rule. They bypass the level-filtered logger.

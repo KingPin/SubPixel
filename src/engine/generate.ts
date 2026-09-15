@@ -5,6 +5,7 @@ import { createDeadline, type Deadline } from "../core/deadline.js";
 import { withFileLock, type LockHandle } from "../core/fsx.js";
 import { silentLogger, type Logger } from "../core/logger.js";
 import { redact } from "../core/redact.js";
+import { eventSink, type EventSink } from "../core/events.js";
 import type {
   BackendName,
   BatchFailure,
@@ -48,7 +49,7 @@ import {
 
 export type ProviderFn = (
   request: GenerateRequest,
-  options: { model: string; deadline?: Deadline },
+  options: { model: string; deadline?: Deadline; onEvent?: EventSink },
 ) => Promise<ProviderResult>;
 
 export interface GenerateDeps {
@@ -71,6 +72,14 @@ export interface GenerateDeps {
   resolveModelFn?: (options: { override?: string }) => Promise<ResolvedModel>;
   /** Emitted to stderr even under `--quiet`, per the output contract. */
   warnAlways?: (message: string) => void;
+  /**
+   * Progress, for a caller that wants to show it.
+   *
+   * Called synchronously and never awaited. Exactly one terminal event — `done` or
+   * `failed` — is emitted per requested image before this function returns, and a
+   * cache hit is a `done` like any other.
+   */
+  onEvent?: EventSink;
 }
 
 const DEFAULT_TIMEOUT_MS = 600_000;
@@ -96,6 +105,7 @@ export async function callWithModelRecovery(
   provider: ProviderFn,
   logger: Logger,
   deadline: Deadline,
+  onEvent?: EventSink,
 ): Promise<ProviderResult> {
   let slug: string | undefined = resolved.slug;
 
@@ -106,7 +116,7 @@ export async function callWithModelRecovery(
       );
     }
     try {
-      return await provider(request, { model: slug, deadline });
+      return await provider(request, { model: slug, deadline, onEvent });
     } catch (err) {
       if (!(err instanceof ModelUnavailable)) throw err;
       const next = advancePast(resolved.candidates, slug);
@@ -357,6 +367,28 @@ export async function generate(
   return runGeneration(resolved, deps, key, count);
 }
 
+/**
+ * The request fields a sidecar manifest needs so `spx regen` can replay it.
+ *
+ * Every field `GenerateRequest` carries that survives a round trip through disk.
+ * `resolvedReferences` is excluded on purpose — it is bytes, re-read from
+ * `referenceImages` at replay time — and `variants` is the requested spec list,
+ * not the `VariantRecord[]` of what was written: a record cannot reconstruct a
+ * custom suffix or a width that was skipped as too large.
+ */
+function replayFields(request: GenerateRequest) {
+  return {
+    size: request.size,
+    exactSize: request.exactSize,
+    quality: request.quality,
+    background: request.background,
+    transparent: request.transparent,
+    style: request.style,
+    referenceImages: request.referenceImages,
+    variantSpecs: request.variants,
+  };
+}
+
 async function runGeneration(
   request: ResolvedRequest,
   deps: GenerateDeps,
@@ -368,6 +400,11 @@ async function runGeneration(
   const startedAt = Date.now();
   const logger = deps.logger ?? silentLogger;
   const warnAlways = deps.warnAlways ?? ((message: string) => logger.warn(message));
+  const emitEvent = eventSink(deps.onEvent);
+  // Terminal events carry how many of the batch are finished. The number only ever
+  // increases, and it is the one figure the engine can state honestly: the provider
+  // knows nothing about the batch, and nothing downstream can see inside a model.
+  let completed = 0;
   const provider: ProviderFn =
     deps.provider ??
     (async (req, opts) => {
@@ -387,11 +424,13 @@ async function runGeneration(
               model: opts.model,
               stallMs: deps.stallMs,
               deadline: opts.deadline,
+              onEvent: opts.onEvent,
             }),
           "codex-exec": (r) =>
             generateViaCodexExec(r, {
               model: opts.model,
               timeoutMs: deps.timeoutMs,
+              onEvent: opts.onEvent,
               // Exec runs after HTTP has already spent part of the request. Without
               // the deadline it starts a fresh full budget, so `--timeout 60` can
               // run for two minutes, and a request the user stopped waiting for can
@@ -441,15 +480,15 @@ async function runGeneration(
       effectivePrompt,
       model,
       backend,
-      size: request.size,
-      exactSize: request.exactSize,
       cacheKey: key,
       sha256: artifact.sha256,
       bytes: artifact.bytes,
       format: artifact.format,
       variants: artifact.variants,
       skippedVariants: artifact.skippedVariants,
+      ...replayFields(request),
     });
+    emitEvent({ stage: "done", index: 0, progress: ++completed, total: 1, message: artifact.path });
     return {
       images: [artifact],
       // A hit serves one image and never starts a batch.
@@ -517,113 +556,125 @@ async function runGeneration(
   const resolved = await resolveFn({ override: request.model });
 
   const slots = Array.from({ length: count }, (_, index) => index);
+  for (const index of slots) emitEvent({ stage: "queued", index, total: count });
+
   const outcome = await mapWithConcurrency(slots, deps.concurrency ?? 2, async (index) => {
-    // The budget starts HERE, not when the command was typed. The spec is explicit
-    // that the timeout begins after slot acquisition, and mapWithConcurrency calls
-    // this worker only once a permit is held. Each image gets its own deadline:
-    // one shared deadline would charge image four for images one through three.
-    const deadline = createDeadline(deps.timeoutMs ?? DEFAULT_TIMEOUT_MS, { label: "generate" });
-    deadline.start();
-
-    // The last thing before the money is spent. Holding the lock is what makes the
-    // cache re-check above meaningful: if the lock was lost between that check and
-    // here, another owner is generating this same image and submitting would buy a
-    // second copy. `assertHeld()` re-reads the record, so it answers for this line.
-    await lock?.assertHeld();
-
-    let result: ProviderResult;
     try {
-      result = await callWithModelRecovery(request, resolved, provider, logger, deadline);
-    } finally {
-      deadline.dispose();
-    }
-    // Read off THIS worker's result, never off a shared variable. Task 20 puts a
-    // fallback chain behind `provider`, and a sibling worker that falls back to
-    // exec while this one is awaiting sharp would otherwise relabel this image.
-    const backend = result.backend ?? "codex-http";
+      // The budget starts HERE, not when the command was typed. The spec is explicit
+      // that the timeout begins after slot acquisition, and mapWithConcurrency calls
+      // this worker only once a permit is held. Each image gets its own deadline:
+      // one shared deadline would charge image four for images one through three.
+      const deadline = createDeadline(deps.timeoutMs ?? DEFAULT_TIMEOUT_MS, { label: "generate" });
+      deadline.start();
 
-    if (result.quota) {
-      await saveQuota(join(deps.stateDir, "quota.json"), result.quota);
-      if (shouldWarn(result.quota)) {
-        warnAlways(formatQuota(result.quota));
+      // The last thing before the money is spent. Holding the lock is what makes the
+      // cache re-check above meaningful: if the lock was lost between that check and
+      // here, another owner is generating this same image and submitting would buy a
+      // second copy. `assertHeld()` re-reads the record, so it answers for this line.
+      await lock?.assertHeld();
+
+      let result: ProviderResult;
+      try {
+        result = await callWithModelRecovery(request, resolved, provider, logger, deadline, (event) =>
+          emitEvent({ ...event, index }),
+        );
+      } finally {
+        deadline.dispose();
       }
-    }
+      // Read off THIS worker's result, never off a shared variable. Task 20 puts a
+      // fallback chain behind `provider`, and a sibling worker that falls back to
+      // exec while this one is awaiting sharp would otherwise relabel this image.
+      const backend = result.backend ?? "codex-http";
 
-    const raw = result.images[0];
-    if (!raw) throw new OutputError("The backend returned no image data.");
+      if (result.quota) {
+        await saveQuota(join(deps.stateDir, "quota.json"), result.quota);
+        if (shouldWarn(result.quota)) {
+          warnAlways(formatQuota(result.quota));
+        }
+      }
 
-    // Bank the paid bytes IMMEDIATELY, before any local step that can fail.
+      const raw = result.images[0];
+      if (!raw) throw new OutputError("The backend returned no image data.");
 
-    // `check()` rather than `assertHeld()`: the bytes are already paid for, so a
-    // lost lock must never throw them away. It only means the shared bank belongs
-    // to someone else now, and this run keeps its image locally.
-    const mayPublish = lock ? await lock.check() : true;
-    if (!mayPublish) {
-      warnAlways(
-        "Another process took over this request's lock, so the result was not added " +
-          "to the shared cache. The image itself is written normally.",
+      // Bank the paid bytes IMMEDIATELY, before any local step that can fail.
+
+      // `check()` rather than `assertHeld()`: the bytes are already paid for, so a
+      // lost lock must never throw them away. It only means the shared bank belongs
+      // to someone else now, and this run keeps its image locally.
+      const mayPublish = lock ? await lock.check() : true;
+      if (!mayPublish) {
+        warnAlways(
+          "Another process took over this request's lock, so the result was not added " +
+            "to the shared cache. The image itself is written normally.",
+        );
+      }
+
+      if (count === 1 && mayPublish) {
+        await storeCache(
+          deps.stateDir,
+          rawCacheKey(request),
+          { path: "", bytes: raw.length, format: "png", sha256: sha256(raw) },
+          raw,
+          { model: result.model, backend, effectivePrompt: result.effectivePrompt },
+        ).catch((err: unknown) => {
+          logger.debug(`Could not bank the raw bytes: ${String(err)}`);
+        });
+      }
+
+      emitEvent({ stage: "processing", index, total: count, message: "writing the image" });
+      const bytes = await postProcess(raw, request, warnAlways);
+
+      const artifact = await withDimensions(
+        await writeImage(destinationFor(index), bytes, writeOptions),
+        bytes,
       );
-    }
-
-    if (count === 1 && mayPublish) {
-      await storeCache(
-        deps.stateDir,
-        rawCacheKey(request),
-        { path: "", bytes: raw.length, format: "png", sha256: sha256(raw) },
-        raw,
-        { model: result.model, backend, effectivePrompt: result.effectivePrompt },
-      ).catch((err: unknown) => {
-        logger.debug(`Could not bank the raw bytes: ${String(err)}`);
-      });
-    }
-
-    const bytes = await postProcess(raw, request, warnAlways);
-
-    const artifact = await withDimensions(
-      await writeImage(destinationFor(index), bytes, writeOptions),
-      bytes,
-    );
-    await publishVariants(artifact, bytes, request, writeOptions, warnAlways);
-    await writeManifest(artifact.path, {
-      prompt: request.prompt,
-      effectivePrompt: result.effectivePrompt,
-      model: result.model,
-      backend,
-      size: request.size,
-      exactSize: request.exactSize,
-      cacheKey: key,
-      sha256: artifact.sha256,
-      bytes: artifact.bytes,
-      format: artifact.format,
-      variants: artifact.variants,
-      skippedVariants: artifact.skippedVariants,
-    });
-
-    // Only a single-image request has an unambiguous cache entry.
-    //
-    // Best effort, exactly like the raw bank above, and for a stronger reason: by
-    // this line the image and its manifest are already on disk. An awaited throw
-    // here would reject the worker and a one-image run would never print the path
-    // to a file that exists — the caller loses an artifact they paid for because an
-    // optimisation failed. It is also reachable by configuration rather than by
-    // accident: cache blobs always publish with `overwrite: false`, which needs a
-    // hard link, so a state directory on a filesystem without them fails here on
-    // every single run. `--overwrite` does not help, because it applies to the
-    // image, not to the blob.
-    if (count === 1 && mayPublish) {
-      await storeCache(deps.stateDir, key, artifact, bytes, {
+      await publishVariants(artifact, bytes, request, writeOptions, warnAlways);
+      await writeManifest(artifact.path, {
+        prompt: request.prompt,
+        effectivePrompt: result.effectivePrompt,
         model: result.model,
         backend,
-        effectivePrompt: result.effectivePrompt,
-      }).catch((err: unknown) => {
-        logger.warn(
-          `The image was written, but it could not be added to the cache ` +
-            `(${redact(err)}). The next identical request will regenerate it.`,
-        );
+        cacheKey: key,
+        sha256: artifact.sha256,
+        bytes: artifact.bytes,
+        format: artifact.format,
+        variants: artifact.variants,
+        skippedVariants: artifact.skippedVariants,
+        ...replayFields(request),
       });
-    }
 
-    return { artifact, backend, model: result.model, effectivePrompt: result.effectivePrompt };
+      // Only a single-image request has an unambiguous cache entry.
+      //
+      // Best effort, exactly like the raw bank above, and for a stronger reason: by
+      // this line the image and its manifest are already on disk. An awaited throw
+      // here would reject the worker and a one-image run would never print the path
+      // to a file that exists — the caller loses an artifact they paid for because an
+      // optimisation failed. It is also reachable by configuration rather than by
+      // accident: cache blobs always publish with `overwrite: false`, which needs a
+      // hard link, so a state directory on a filesystem without them fails here on
+      // every single run. `--overwrite` does not help, because it applies to the
+      // image, not to the blob.
+      if (count === 1 && mayPublish) {
+        await storeCache(deps.stateDir, key, artifact, bytes, {
+          model: result.model,
+          backend,
+          effectivePrompt: result.effectivePrompt,
+        }).catch((err: unknown) => {
+          logger.warn(
+            `The image was written, but it could not be added to the cache ` +
+              `(${redact(err)}). The next identical request will regenerate it.`,
+          );
+        });
+      }
+
+      emitEvent({ stage: "done", index, progress: ++completed, total: count, message: artifact.path });
+      return { artifact, backend, model: result.model, effectivePrompt: result.effectivePrompt };
+    } catch (err) {
+      // The terminal event for this image, whatever went wrong. `mapWithConcurrency`
+      // collects the rejection for the batch report, so this only labels it.
+      emitEvent({ stage: "failed", index, progress: ++completed, total: count, message: redact(err) });
+      throw err;
+    }
   });
 
   const produced = outcome.values;

@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import { ConfigError, SubpixelError } from "../core/errors.js";
 import { loadConfig } from "../config/load.js";
+import type { EventSink } from "../core/events.js";
 import { silentLogger, type Logger } from "../core/logger.js";
 import { redact } from "../core/redact.js";
 import type { BackendName } from "../core/types.js";
@@ -31,6 +32,15 @@ export interface SyncDeps {
   /** One line per event, for the human-readable report. */
   log?: (line: string) => void;
   warnAlways?: (message: string) => void;
+  /**
+   * Progress for the whole run, tagged with the asset each event came from.
+   *
+   * Assets generate concurrently, so the events of several pictures interleave in
+   * one stream. `assetId` is what makes that stream readable — without it a caller
+   * watching four assets sees four identical "the model is drawing" lines and
+   * cannot tell which one finished.
+   */
+  onEvent?: EventSink;
 }
 
 export interface SyncFailure {
@@ -169,6 +179,9 @@ export async function syncAssets(loaded: LoadedAssets, deps: SyncDeps = {}): Pro
           ...(deps.stallMs !== undefined ? { stallMs: deps.stallMs } : {}),
           ...(deps.provider ? { provider: deps.provider } : {}),
           ...(deps.warnAlways ? { warnAlways: deps.warnAlways } : {}),
+          // Tagged here rather than in the engine: the engine generates one picture
+          // and knows nothing about the manifest that asked for it.
+          ...(deps.onEvent ? { onEvent: (event) => deps.onEvent?.({ ...event, assetId: asset.id }) } : {}),
         });
         log(redact(`wrote ${asset.out}`));
         return asset.id;

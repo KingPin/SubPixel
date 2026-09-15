@@ -5,6 +5,8 @@ import { modelCachePath, resolveModel } from "../providers/models.js";
 import { formatQuota, isQuotaStale, loadQuota, shouldWarn } from "../providers/quota.js";
 import { sharpAvailable } from "../engine/sharpx.js";
 import { loadConfig } from "../config/load.js";
+import { initIsCurrent, planInit, type TargetPlan } from "../install/init.js";
+import { TOOLS } from "../mcp/tools.js";
 
 export const TOS_NOTICE =
   "subpixel drives the undocumented chatgpt.com/backend-api/codex endpoint using your " +
@@ -45,6 +47,24 @@ export interface DoctorReport {
     /** When the reading was taken. Absent when no reading has ever been recorded. */
     observedAt?: string;
   };
+  /**
+   * Which agent harnesses on this machine have been pointed at subpixel.
+   *
+   * Derived from the same pure writers `spx init` uses: a target is configured when
+   * re-running its writer would change nothing. That is the only definition that
+   * cannot drift from what `init` actually writes.
+   */
+  install: {
+    ok: boolean;
+    configured: string[];
+    pending: string[];
+    conflicts: string[];
+    problem?: string;
+  };
+  mcp: {
+    /** How many tools `spx mcp` declares. Zero means the server did not build. */
+    tools: number;
+  };
   notice: string;
 }
 
@@ -54,6 +74,8 @@ export interface DoctorOptions {
   cachePath?: string;
   quotaPath?: string;
   env?: NodeJS.ProcessEnv;
+  /** The home directory the user-scoped harness configs are looked for under. */
+  home?: string;
 }
 
 function humanizeDelta(ms: number): string {
@@ -89,6 +111,21 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
 
   const loaded = await loadConfig({ cwd: options.cwd });
 
+  // Never throws. `planInit` reads the bundled skill and stats a handful of
+  // directories; a package installed without its skills directory is worth naming in
+  // the report, and is not worth turning the whole report into an exception.
+  let plan: TargetPlan[] = [];
+  let installProblem: string | undefined;
+  try {
+    plan = await planInit({
+      cwd: options.cwd,
+      ...(options.home !== undefined ? { home: options.home } : {}),
+      env,
+    });
+  } catch (err) {
+    installProblem = (err as Error).message;
+  }
+
   // Never throws: `loadQuota` degrades a missing, truncated, or hand-edited file to
   // undefined, and an unknown allowance must not turn a healthy environment into a FAIL.
   const quotaReading = await loadQuota(
@@ -109,6 +146,14 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
       cacheAgeHours: cacheAgeHours === undefined ? undefined : Math.round(cacheAgeHours * 10) / 10,
     },
     config: { path: loaded.path, styles: Object.keys(loaded.config.styles ?? {}).length },
+    install: {
+      ok: installProblem === undefined && initIsCurrent(plan),
+      configured: plan.filter((t) => t.state === "unchanged").map((t) => t.id),
+      pending: plan.filter((t) => t.state === "created" || t.state === "updated").map((t) => t.id),
+      conflicts: plan.filter((t) => t.state === "conflict").map((t) => t.id),
+      ...(installProblem !== undefined ? { problem: installProblem } : {}),
+    },
+    mcp: { tools: TOOLS.length },
     quota: {
       summary: formatQuota(quotaReading),
       warn: shouldWarn(quotaReading),
@@ -117,6 +162,15 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
     },
     notice: TOS_NOTICE,
   };
+}
+
+function describeInstall(install: DoctorReport["install"]): string {
+  if (install.problem !== undefined) return install.problem;
+  const parts: string[] = [];
+  if (install.configured.length > 0) parts.push(`configured: ${install.configured.join(", ")}`);
+  if (install.pending.length > 0) parts.push(`run \`spx init\` for: ${install.pending.join(", ")}`);
+  if (install.conflicts.length > 0) parts.push(`conflicts: ${install.conflicts.join(", ")}`);
+  return parts.length > 0 ? parts.join("; ") : "no agent harness detected";
 }
 
 export function formatDoctorReport(report: DoctorReport): string {
@@ -145,6 +199,8 @@ export function formatDoctorReport(report: DoctorReport): string {
   lines.push(
     `${mark(true)} config    ${report.config.path ?? "none"}${report.config.styles > 0 ? ` (${report.config.styles} styles)` : ""}`,
   );
+  lines.push(`${mark(report.mcp.tools > 0)} mcp       ${report.mcp.tools} tools on \`spx mcp\``);
+  lines.push(`${mark(report.install.ok)} init      ${describeInstall(report.install)}`);
   // `mark` is inverted here on purpose. Every other line marks "is this present and
   // usable"; this one marks "is there room left". A reading above the threshold is the
   // one thing in the report the user can act on before it bites, so it gets the FAIL

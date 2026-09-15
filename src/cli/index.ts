@@ -1,24 +1,19 @@
 #!/usr/bin/env node
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import { Command } from "commander";
 import { collectDoctorReport, formatDoctorReport } from "./doctor.js";
 import { collectModelReport, formatModelReport } from "./models.js";
 import { runEdit } from "./edit.js";
 import { runGenerate } from "./generate.js";
 import { runIcons } from "./icons.js";
+import { runInit } from "./init.js";
+import { runMcp } from "./mcp.js";
+import { runRegen } from "./regen.js";
 import { runSync } from "./sync.js";
 import { normalizeArgv } from "./options.js";
 import { collectStyleReport, formatStyleReport } from "./styles.js";
 import { loadConfig } from "../config/load.js";
 import { redact } from "../core/redact.js";
-
-async function packageVersion(): Promise<string> {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const raw = await readFile(join(here, "..", "..", "package.json"), "utf8");
-  return (JSON.parse(raw) as { version: string }).version;
-}
+import { packageVersion } from "../core/version.js";
 
 export async function buildProgram(): Promise<Command> {
   const program = new Command();
@@ -122,6 +117,21 @@ export async function buildProgram(): Promise<Command> {
     .action(runGenerate);
 
   program
+    .command("regen")
+    .argument("<image>", "the image to re-generate, with its sidecar manifest beside it")
+    .description("Re-generate an existing image from the manifest written beside it")
+    .option("--size <WxH>", "override the recorded generation size")
+    .option("--style <name>", "replace the recorded style with a named one from the config")
+    .option("--model <slug>", "pin a driver model instead of the recorded one")
+    .option("-b, --backend <name>", "codex-http | codex-exec | api | auto")
+    .option("-o, --out <path>", "write to this path instead of over the original")
+    .option("--json", "emit the result as JSON on stdout")
+    .option("--emit <format>", "path | markdown | jsx | html", "path")
+    .option("-v, --verbose", "verbose logging on stderr")
+    .option("-q, --quiet", "errors only on stderr")
+    .action(runRegen);
+
+  program
     .command("sync")
     .description("Generate the assets declared in assets.yml that are missing or out of date")
     .option("-f, --file <path>", "path to the manifest")
@@ -179,6 +189,18 @@ export async function buildProgram(): Promise<Command> {
     .option("-v, --verbose", "verbose logging on stderr")
     .option("-q, --quiet", "errors only on stderr")
     .action(runEdit);
+
+  program
+    .command("init")
+    .description("Write the subpixel skill and MCP server config for the agent harnesses on this machine")
+    .option("--dry-run", "render every file that would be written, and write nothing")
+    .option("--force", "replace a config file that could not be parsed, instead of skipping it")
+    .action(runInit);
+
+  program
+    .command("mcp")
+    .description("Run the MCP server on stdio, for an agent host to spawn")
+    .action(runMcp);
 
   return program;
 }

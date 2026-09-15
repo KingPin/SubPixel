@@ -1,4 +1,6 @@
-export const VERSION = "0.0.0";
+// The version is read from package.json at runtime rather than duplicated here. A
+// second copy is a copy that goes stale at the one moment it matters — a release.
+export { packageVersion } from "./core/version.js";
 
 export { generate } from "./engine/generate.js";
 export { generateViaCodexHttp } from "./providers/codex-http.js";

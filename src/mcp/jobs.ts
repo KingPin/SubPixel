@@ -85,7 +85,19 @@ function isJobRecord(value: unknown): value is JobRecord {
   );
 }
 
+/**
+ * The ids `createJob` mints, and nothing else.
+ *
+ * `job_id` arrives from the host as an arbitrary string and is interpolated into a
+ * filesystem path. A `../` in it escapes the jobs directory and reads any file that
+ * happens to parse as a job record — including another project's. Constraining the
+ * id to the UUID shape is the whole check: it cannot contain a separator, a dot, or
+ * anything else `join` would treat as navigation.
+ */
+const JOB_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function readJob(dir: string, id: string): Promise<JobRecord | undefined> {
+  if (!JOB_ID.test(id)) return undefined;
   try {
     const parsed: unknown = JSON.parse(await readFile(pathFor(dir, id), "utf8"));
     return isJobRecord(parsed) ? parsed : undefined;

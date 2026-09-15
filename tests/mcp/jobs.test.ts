@@ -112,6 +112,18 @@ describe("the job store", () => {
     expect(await readJob(dir, old.id)).toBeUndefined();
   });
 
+  it("refuses a job id that navigates out of the jobs directory", async () => {
+    // `job_id` comes from the host as an arbitrary string. The escaped file is a
+    // valid record here, so only the id check can stop it being read.
+    const job = await createJob(dir, "generate_image");
+    const outside = join(dir, "..", "elsewhere.json");
+    await writeFile(outside, await readFile(join(dir, `${job.id}.json`), "utf8"));
+
+    expect(await readJob(dir, "../elsewhere")).toBeUndefined();
+    expect(await readJob(dir, "/etc/passwd")).toBeUndefined();
+    expect(await readJob(dir, job.id)).toBeDefined();
+  });
+
   it("ignores a directory that does not exist yet", async () => {
     expect(await listJobs(join(dir, "absent"))).toEqual([]);
     expect(await readJob(dir, "no-such-job")).toBeUndefined();

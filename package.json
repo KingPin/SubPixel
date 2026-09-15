@@ -6,7 +6,7 @@
   "author": "KingPin <28669+KingPin@users.noreply.github.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/KingPin/subpixel.git"
+    "url": "git+https://github.com/KingPin/SubPixel.git"
   },
   "type": "module",
   "engines": {
@@ -18,14 +18,23 @@
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "files": [
     "dist",
+    "skills",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "postbuild": "chmod +x dist/cli/bin.js",
+    "prepack": "npm run build",
     "test": "vitest run",
     "test:live": "SUBPIXEL_LIVE=1 vitest run tests/live",
     "test:watch": "vitest",
@@ -37,7 +46,7 @@
     "yaml": "^2.9.1"
   },
   "peerDependencies": {
-    "sharp": "^0.33.0"
+    "sharp": "^0.35.4"
   },
   "peerDependenciesMeta": {
     "sharp": {
@@ -49,5 +58,20 @@
     "sharp": "^0.35.4",
     "typescript": "^7.0.2",
     "vitest": "^5.0.0"
-  }
+  },
+  "keywords": [
+    "image-generation",
+    "ai",
+    "agent",
+    "mcp",
+    "model-context-protocol",
+    "cli",
+    "chatgpt",
+    "codex",
+    "openai",
+    "gpt-image",
+    "claude-code",
+    "favicon",
+    "assets"
+  ]
 }

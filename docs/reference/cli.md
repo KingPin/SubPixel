@@ -68,6 +68,28 @@ Takes exactly one source image and an instruction. Every `generate` flag applies
 except `--image`, `--emit` and `-n`: the source is the positional argument, and
 `edit` writes one image.
 
+## regen
+
+```bash
+spx regen images/hero.png                 # replay the recorded request, new pixels
+spx regen images/hero.png --size 1024x1024
+spx regen images/hero.png --style brand -o images/hero-v2.png
+```
+
+Re-generates an image from the sidecar manifest written beside it — the `.json` file
+`generate`, `edit` and `sync` leave next to every image. The manifest records the
+whole request: prompt, style, reference images, quality, background, transparency,
+the requested variant widths and their names. `regen` replays all of it, ignores the
+cache, and writes over the original.
+
+Reference paths are stored relative to the sidecar, so a replay reads the same files
+whichever directory you run it from. A missing, unparseable, or wrong-shaped
+manifest exits 2 before any quota is spent; it never regenerates from nothing.
+
+Accepted overrides: `--size`, `--style`, `--model`, `--backend`, `-o`. Each beats
+what the manifest recorded. Manifests written before this shape existed replay
+best-effort and say so once on stderr.
+
 ## icons
 
 ```bash

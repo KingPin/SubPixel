@@ -8,6 +8,7 @@ import { collectModelReport, formatModelReport } from "./models.js";
 import { runEdit } from "./edit.js";
 import { runGenerate } from "./generate.js";
 import { runIcons } from "./icons.js";
+import { runRegen } from "./regen.js";
 import { runSync } from "./sync.js";
 import { normalizeArgv } from "./options.js";
 import { collectStyleReport, formatStyleReport } from "./styles.js";
@@ -120,6 +121,21 @@ export async function buildProgram(): Promise<Command> {
     .option("-v, --verbose", "verbose logging on stderr")
     .option("-q, --quiet", "errors only on stderr")
     .action(runGenerate);
+
+  program
+    .command("regen")
+    .argument("<image>", "the image to re-generate, with its sidecar manifest beside it")
+    .description("Re-generate an existing image from the manifest written beside it")
+    .option("--size <WxH>", "override the recorded generation size")
+    .option("--style <name>", "replace the recorded style with a named one from the config")
+    .option("--model <slug>", "pin a driver model instead of the recorded one")
+    .option("-b, --backend <name>", "codex-http | codex-exec | api | auto")
+    .option("-o, --out <path>", "write to this path instead of over the original")
+    .option("--json", "emit the result as JSON on stdout")
+    .option("--emit <format>", "path | markdown | jsx | html", "path")
+    .option("-v, --verbose", "verbose logging on stderr")
+    .option("-q, --quiet", "errors only on stderr")
+    .action(runRegen);
 
   program
     .command("sync")

@@ -357,6 +357,28 @@ export async function generate(
   return runGeneration(resolved, deps, key, count);
 }
 
+/**
+ * The request fields a sidecar manifest needs so `spx regen` can replay it.
+ *
+ * Every field `GenerateRequest` carries that survives a round trip through disk.
+ * `resolvedReferences` is excluded on purpose — it is bytes, re-read from
+ * `referenceImages` at replay time — and `variants` is the requested spec list,
+ * not the `VariantRecord[]` of what was written: a record cannot reconstruct a
+ * custom suffix or a width that was skipped as too large.
+ */
+function replayFields(request: GenerateRequest) {
+  return {
+    size: request.size,
+    exactSize: request.exactSize,
+    quality: request.quality,
+    background: request.background,
+    transparent: request.transparent,
+    style: request.style,
+    referenceImages: request.referenceImages,
+    variantSpecs: request.variants,
+  };
+}
+
 async function runGeneration(
   request: ResolvedRequest,
   deps: GenerateDeps,
@@ -441,14 +463,13 @@ async function runGeneration(
       effectivePrompt,
       model,
       backend,
-      size: request.size,
-      exactSize: request.exactSize,
       cacheKey: key,
       sha256: artifact.sha256,
       bytes: artifact.bytes,
       format: artifact.format,
       variants: artifact.variants,
       skippedVariants: artifact.skippedVariants,
+      ...replayFields(request),
     });
     return {
       images: [artifact],
@@ -589,14 +610,13 @@ async function runGeneration(
       effectivePrompt: result.effectivePrompt,
       model: result.model,
       backend,
-      size: request.size,
-      exactSize: request.exactSize,
       cacheKey: key,
       sha256: artifact.sha256,
       bytes: artifact.bytes,
       format: artifact.format,
       variants: artifact.variants,
       skippedVariants: artifact.skippedVariants,
+      ...replayFields(request),
     });
 
     // Only a single-image request has an unambiguous cache entry.

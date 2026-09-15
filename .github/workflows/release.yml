@@ -1,0 +1,126 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Pack and rehearse the publish without shipping anything"
+        type: boolean
+        default: true
+
+# Required by both npm provenance and trusted publishing. No NPM_TOKEN exists:
+# npm removed automation tokens in November 2025, and OIDC needs no secret.
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  # The lowest supported Node. This one job packs, smoke-tests, and uploads the
+  # tarball; the others only run the suite. Two uploaders would collide on the name.
+  PACK_NODE: "24"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ["24", "26"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+      # A tag must ship the version it names. Checked before anything is packed, and
+      # only on a tag push: a workflow_dispatch run has no tag ref to compare against,
+      # and rehearsing the pack from a branch is the whole point of the dispatch.
+      - name: Check the tag matches package.json
+        if: matrix.node == env.PACK_NODE && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p 'require("./package.json").version')"
+          if [ "$tag" != "$pkg" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package.json version $pkg" >&2
+            exit 1
+          fi
+
+      - name: Pack
+        if: matrix.node == env.PACK_NODE
+        id: pack
+        run: |
+          file="$(npm pack --silent)"
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+          sha256sum "$file" | tee "$file.sha256"
+
+      # `npm pack --dry-run` lists files. It does not prove the CLI starts. This
+      # installs the exact bytes that will be published and runs them.
+      - name: Smoke-test the tarball
+        if: matrix.node == env.PACK_NODE
+        run: |
+          tarball="$PWD/${{ steps.pack.outputs.file }}"
+          work="$(mktemp -d)"
+          cd "$work"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund "$tarball"
+          ./node_modules/.bin/spx --version
+          test -f node_modules/subpixel/skills/subpixel/SKILL.md
+
+          # `spx doctor` is EXPECTED to fail here. A clean runner has no Codex
+          # credentials, so the report is `ok: false` and the CLI exits 1. Asserting
+          # success would block every release on an ordinary environmental condition;
+          # asserting this exact failure is what proves the binary ran and reported.
+          # Real subscription credentials never go into release CI.
+          rc=0
+          out="$(HOME="$work" CODEX_HOME="$work/codex" XDG_CONFIG_HOME="$work/config" \
+            ./node_modules/.bin/spx doctor --json)" || rc=$?
+          if [ "$rc" -ne 1 ]; then
+            echo "expected spx doctor to exit 1 without credentials, got $rc" >&2
+            exit 1
+          fi
+          echo "$out" | node -e '
+            const report = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+            if (report.ok !== false) throw new Error("expected ok: false");
+            if (report.auth.present !== false) throw new Error("expected the report to name the missing auth");
+          '
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.node == env.PACK_NODE
+        with:
+          name: tarball
+          path: |
+            ${{ steps.pack.outputs.file }}
+            ${{ steps.pack.outputs.file }}.sha256
+          if-no-files-found: error
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.PACK_NODE }}
+          registry-url: https://registry.npmjs.org
+
+      # OIDC support landed in npm 11.5.1. The runner image ships whatever it ships,
+      # so the floor is pinned here rather than assumed.
+      - run: npm install -g npm@^11.5.1
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tarball
+
+      # The bytes that were tested are the bytes that ship. `npm publish <dir>` would
+      # re-run `prepack` and rebuild them — and there is no source tree here to rebuild
+      # from — so the tarball is published by path, after proving it survived transit.
+      - name: Publish
+        run: |
+          sha256sum --check ./*.tgz.sha256
+          extra=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then extra="--dry-run"; fi
+          npm publish ./*.tgz --provenance --access public $extra

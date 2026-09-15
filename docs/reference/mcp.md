@@ -206,6 +206,11 @@ the server mid-generation, the orphaned record is marked `failed` on the next st
 and is never resubmitted, for the same reason: the first attempt may already have cost
 something.
 
+Records live in `.subpixel/jobs`. A finished one is kept for 24 hours and swept on the
+next server startup — far longer than any host polls, short enough that the directory
+does not grow without bound. The image and its sidecar manifest are the durable
+artifacts; the job record is a receipt for a call that has already been answered.
+
 ## Errors
 
 A failed tool call comes back as an MCP error result whose text is one JSON document:

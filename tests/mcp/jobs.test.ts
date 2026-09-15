@@ -11,6 +11,7 @@ import {
   listJobs,
   readJob,
   reapOrphans,
+  JOB_RETENTION_MS,
 } from "../../src/mcp/jobs.js";
 import { ContentBlocked } from "../../src/core/errors.js";
 
@@ -122,6 +123,29 @@ describe("the job store", () => {
     expect(await readJob(dir, "../elsewhere")).toBeUndefined();
     expect(await readJob(dir, "/etc/passwd")).toBeUndefined();
     expect(await readJob(dir, job.id)).toBeDefined();
+  });
+
+  it("sweeps finished records past the retention while reaping", async () => {
+    // Nothing else touches this directory between tool calls, so a startup that
+    // only reaps leaves every completed record on disk forever.
+    const done = await createJob(dir, "generate_image");
+    await completeJob(dir, done.id, { ok: true });
+    const stale = await readJob(dir, done.id);
+    await writeFile(
+      join(dir, `${done.id}.json`),
+      JSON.stringify(
+        { ...stale, updatedAt: new Date(Date.now() - JOB_RETENTION_MS - 1000).toISOString() },
+        null,
+        2,
+      ),
+    );
+    const recent = await createJob(dir, "generate_image");
+    await completeJob(dir, recent.id, { ok: true });
+
+    await reapOrphans(dir);
+
+    expect(await readJob(dir, done.id)).toBeUndefined();
+    expect(await readJob(dir, recent.id)).toBeDefined();
   });
 
   it("ignores a directory that does not exist yet", async () => {

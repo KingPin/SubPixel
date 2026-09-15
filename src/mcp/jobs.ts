@@ -186,9 +186,22 @@ export async function listJobs(
  * probed, and a reused pid reads as alive. Both keep the job `running`, which is
  * merely stale rather than wrong.
  */
-export async function reapOrphans(dir: string): Promise<number> {
+/**
+ * How long a finished record is kept.
+ *
+ * A host polls `get_image_job` for seconds, not days. A day is far longer than any
+ * poll and short enough that the directory stays small; the record is a receipt for
+ * a call that has already been answered, and the image and its sidecar are the
+ * durable artifacts.
+ */
+export const JOB_RETENTION_MS = 24 * 60 * 60 * 1000;
+
+export async function reapOrphans(dir: string, maxAgeMs = JOB_RETENTION_MS): Promise<number> {
   let reaped = 0;
-  for (const record of await listJobs(dir)) {
+  // The sweep rides along with the scan this already does. Nothing else touches the
+  // directory when no tool is running, so without a retention here every completed
+  // and failed record stays forever and each startup scan costs a little more.
+  for (const record of await listJobs(dir, { maxAgeMs })) {
     if (record.status !== "running") continue;
     if (!ownerIsDead(record.pid, record.host)) continue;
     await write(dir, {

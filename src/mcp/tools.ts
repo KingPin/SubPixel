@@ -483,7 +483,7 @@ export const HANDLERS: Record<string, Handler> = {
 
     // Drift is reported, never thrown. An agent that asked what is out of date has
     // been answered, and `drift: true` is the answer, not a failure.
-    const { failure: _failure, ...report } = await syncAssets(loaded, {
+    const { failure, ...report } = await syncAssets(loaded, {
       force,
       ...(parseBackend(args.backend as string | undefined)
         ? { backend: parseBackend(args.backend as string | undefined)! }
@@ -491,6 +491,14 @@ export const HANDLERS: Record<string, Handler> = {
       ...(deps.provider ? { provider: deps.provider } : {}),
       ...(deps.onEvent ? { onEvent: deps.onEvent } : {}),
     });
+
+    // `syncAssets` returns this rather than throwing so the CLI can print the report
+    // and THEN exit non-zero. MCP has no such two-step: a result without `isError`
+    // is a success, and swallowing the failure told the host every asset was fine
+    // while handing it a report full of them. The taxonomy code is the half the
+    // model acts on — `AUTH_EXPIRED` means run doctor, `RATE_LIMITED` means wait —
+    // and `failures` inside the report carries the per-asset detail regardless.
+    if (failure !== undefined) throw failure;
     return report;
   },
   list_styles: async (args, deps) => {

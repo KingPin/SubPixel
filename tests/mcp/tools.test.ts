@@ -13,7 +13,7 @@ vi.mock("../../src/cli/doctor.js", async (importOriginal) => ({
 const { TOOLS, HANDLERS, callTool, validateArgs } = await import("../../src/mcp/tools.js");
 const { buildProgram } = await import("../../src/cli/index.js");
 const { createJob, completeJob, jobsDirFor } = await import("../../src/mcp/jobs.js");
-const { ConfigError } = await import("../../src/core/errors.js");
+const { ConfigError, AuthExpired } = await import("../../src/core/errors.js");
 
 const REPORT: DoctorReport = {
   ok: true,
@@ -199,6 +199,32 @@ describe("the read-only tools", () => {
     expect(JSON.stringify(result)).not.toContain("c2lnbmF0dXJl");
     expect(JSON.stringify(result)).toContain("[REDACTED]");
     expect((result as { ok: boolean }).ok).toBe(true);
+  });
+});
+
+describe("sync_assets", () => {
+  it("surfaces the taxonomy error instead of reporting a clean run", async () => {
+    // `syncAssets` returns its failure rather than throwing, so the CLI can print
+    // the report and then exit non-zero. MCP has no second step: swallowing that
+    // failure told the host every asset was fine, and left the job `done`.
+    await writeFile(join(dir, "assets.yml"), "assets:\n  - id: hero\n    prompt: a dashboard\n");
+
+    await expect(
+      callTool("sync_assets", {}, {
+        cwd: dir,
+        provider: vi.fn(async () => {
+          throw new AuthExpired("the ChatGPT session expired");
+        }) as never,
+      }),
+    ).rejects.toThrow(AuthExpired);
+  });
+
+  it("still answers a drift check without calling a provider", async () => {
+    await writeFile(join(dir, "assets.yml"), "assets:\n  - id: hero\n    prompt: a dashboard\n");
+
+    const report = await callTool("sync_assets", { check: true }, { cwd: dir });
+
+    expect(report).toMatchObject({ drift: true });
   });
 });
 

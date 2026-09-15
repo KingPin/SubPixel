@@ -35,9 +35,9 @@ needed only for `--exact-size`, `--transparent`, `--variants`, and `spx icons`.
    spx generate "a wide banner, flat vector, teal and slate" --out public/banner.png
    ```
 
-3. Look at what you got. Every image gets a `.subpixel.json` manifest beside it
-   recording the prompt, the model, and the settings, so the same image can be
-   re-generated later with `spx regen`.
+3. Look at what you got. Every image gets a manifest beside it — `hero.png` is
+   written with a `hero.png.json` recording the prompt, the model, and the settings,
+   so the same image can be re-generated later with `spx regen`.
 
 Results are cached by content. Running the same prompt again returns the same file
 rather than a second charge.

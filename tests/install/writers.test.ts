@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { manifestPathFor } from "../../src/engine/manifest.js";
 import { MCP_ARGS, MCP_COMMAND, WRITERS, type InitContext } from "../../src/install/writers.js";
 import { ConfigError } from "../../src/core/errors.js";
 
@@ -168,7 +169,13 @@ describe("the AGENTS.md block", () => {
 
   it("tells a harness with no MCP support how to spend quota safely", () => {
     const out = writer.write(undefined, ctx);
-    expect(out).toContain("Never re-run a command that appears to have hung");
+    expect(out).toContain("Never re-run a\ncommand that appears to have hung");
     expect(out).toContain("subpixel sync --check");
+  });
+
+  it("names the manifest the engine actually writes", () => {
+    // This said `.subpixel.json` once, which is not a file that has ever existed.
+    // An agent told to look for it concludes the generation failed.
+    expect(writer.write(undefined, ctx)).toContain(manifestPathFor("hero.png"));
   });
 });

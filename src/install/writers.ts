@@ -145,9 +145,10 @@ do not download a stock photo, and do not leave a placeholder.
   the ChatGPT credentials are missing or expired.
 
 Generation takes about 30 seconds, and up to 6 minutes on the codex-exec backend.
-Set the command timeout to the maximum your tooling allows and wait. Never re-run a command that appears to have hung — the first
-request may already have been billed. Every run writes a \`.subpixel.json\` manifest
-beside the image; read the image path back from stdout rather than guessing it.
+Set the command timeout to the maximum your tooling allows and wait. Never re-run a
+command that appears to have hung — the first request may already have been billed.
+Every run writes a manifest beside the image (\`hero.png\` gets a \`hero.png.json\`);
+read the image path back from stdout rather than guessing it.
 ${AGENTS_END}`;
 
 export const WRITERS: Writer[] = [

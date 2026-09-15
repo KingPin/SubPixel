@@ -6,6 +6,7 @@ import { KNOWN_COMMANDS } from "../../src/cli/options.js";
 import { TOS_NOTICE } from "../../src/cli/doctor.js";
 import { MCP_ARGS, MCP_COMMAND } from "../../src/install/writers.js";
 import { TOOLS } from "../../src/mcp/tools.js";
+import { manifestPathFor } from "../../src/engine/manifest.js";
 import { DriftDetected } from "../../src/core/errors.js";
 
 const DOC = await readFile("README.md", "utf8");
@@ -59,6 +60,12 @@ describe("the README", () => {
 
   it("carries the terms-of-service notice verbatim", () => {
     expect(PROSE).toContain(TOS_NOTICE.replace(/\s+/g, " "));
+  });
+
+  it("names the manifest the engine actually writes beside an image", () => {
+    // It was `.subpixel.json` here for a while, and never on disk. A reader who
+    // greps for the name the README gives them finds nothing.
+    expect(PROSE).toContain(manifestPathFor("hero.png"));
   });
 
   it("names the exit code `sync --check` actually returns", () => {

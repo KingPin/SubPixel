@@ -208,7 +208,7 @@ describe("the tool dispatcher", () => {
   });
 
   it("refuses a declared tool this build cannot run yet", async () => {
-    await expect(callTool("generate_image", { prompt: "a fox" })).rejects.toThrow(
+    await expect(callTool("sync_assets", { check: true })).rejects.toThrow(
       /declared but not available/,
     );
   });

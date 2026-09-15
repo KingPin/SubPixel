@@ -1,7 +1,4 @@
 #!/usr/bin/env node
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import { Command } from "commander";
 import { collectDoctorReport, formatDoctorReport } from "./doctor.js";
 import { collectModelReport, formatModelReport } from "./models.js";
@@ -14,12 +11,7 @@ import { normalizeArgv } from "./options.js";
 import { collectStyleReport, formatStyleReport } from "./styles.js";
 import { loadConfig } from "../config/load.js";
 import { redact } from "../core/redact.js";
-
-async function packageVersion(): Promise<string> {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const raw = await readFile(join(here, "..", "..", "package.json"), "utf8");
-  return (JSON.parse(raw) as { version: string }).version;
-}
+import { packageVersion } from "../core/version.js";
 
 export async function buildProgram(): Promise<Command> {
   const program = new Command();

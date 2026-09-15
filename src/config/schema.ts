@@ -19,6 +19,15 @@ export interface SubpixelConfig {
   allowPaid?: boolean;
   concurrency?: number;
   budget?: { maxImagesPerRun?: number };
+  /**
+   * Settings for the MCP server.
+   *
+   * `cutoverMs` is how long a generating tool call waits before it stops holding the
+   * host's request open and hands back a `job_id` instead. Hosts disagree about how
+   * long a tool may take, so the number has to be tunable per project. Overridden by
+   * `SUBPIXEL_MCP_CUTOVER_MS`.
+   */
+  mcp?: { cutoverMs?: number };
   styles?: Record<string, StyleDefinition>;
 }
 
@@ -30,6 +39,7 @@ const CONFIG_KEYS = [
   "allowPaid",
   "concurrency",
   "budget",
+  "mcp",
   "styles",
 ] as const;
 
@@ -141,6 +151,15 @@ export function validateConfig(
     const max = (budget as Record<string, unknown>).maxImagesPerRun;
     config.budget =
       max === undefined ? {} : { maxImagesPerRun: asPositiveInt(max, source, "budget.maxImagesPerRun") };
+  }
+  if (input.mcp !== undefined) {
+    const mcp = input.mcp;
+    if (typeof mcp !== "object" || mcp === null || Array.isArray(mcp)) {
+      fail(source, "mcp", "an object", mcp);
+    }
+    const cutover = (mcp as Record<string, unknown>).cutoverMs;
+    config.mcp =
+      cutover === undefined ? {} : { cutoverMs: asPositiveInt(cutover, source, "mcp.cutoverMs") };
   }
   if (input.styles !== undefined) {
     const styles = input.styles;

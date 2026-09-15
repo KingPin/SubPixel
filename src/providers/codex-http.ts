@@ -14,6 +14,7 @@ import {
 import { createDeadline, type Deadline } from "../core/deadline.js";
 import type { Logger } from "../core/logger.js";
 import { redact } from "../core/redact.js";
+import { eventSink, type EventSink } from "../core/events.js";
 import type { BackendName, GenerateRequest } from "../core/types.js";
 import { augmentPrompt } from "../engine/prompt.js";
 import { CODEX_RESPONSES_URL, buildBody, buildHeaders } from "./codex-http-request.js";
@@ -41,6 +42,11 @@ export interface CodexHttpOptions {
   totalMs?: number;
   /** Warnings that must reach the user without failing the run. */
   logger?: Logger;
+  /**
+   * Progress, for a caller that wants to show it. Never awaited, and an exception
+   * thrown inside it is swallowed rather than allowed to abandon a paid request.
+   */
+  onEvent?: EventSink;
 }
 
 export interface ProviderResult {
@@ -196,6 +202,11 @@ async function runRequest(
     throw new StreamAborted("The backend returned no response body.");
   }
 
+  // Emitted once the stream exists, not when the POST was written: this is the
+  // first moment the request is known to have reached the backend.
+  const emitEvent = eventSink(options.onEvent);
+  emitEvent({ stage: "submitted", message: "request accepted, waiting for the model" });
+
   let finalImage: string | undefined;
   let modelUsed = options.model;
   let quota: RateLimitEvent | undefined;
@@ -244,6 +255,7 @@ async function runRequest(
       // the prefix rather than the `.completed` suffix so `.in_progress`,
       // `.generating` and `.partial_image` all close the recovery window too.
       if (type.startsWith("response.image_generation_call")) {
+        if (!workStarted) emitEvent({ stage: "generating", message: "the model is drawing" });
         workStarted = true;
       }
 
@@ -252,6 +264,7 @@ async function runRequest(
       if (type.startsWith("response.output_item")) {
         const item = imageCallItem(record);
         if (item) {
+          if (!workStarted) emitEvent({ stage: "generating", message: "the model is drawing" });
           workStarted = true;
           if (typeof item.result === "string") {
             finalImage = item.result;

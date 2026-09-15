@@ -200,3 +200,43 @@ export interface ImageToolParams {
   background?: string;
   output_format: ImageFormat;
 }
+
+/**
+ * Where a single image is in the pipeline.
+ *
+ * Ordered, and the order is the contract: an event never reports an earlier stage
+ * than one already reported for the same image. `done` and `failed` are terminal,
+ * and exactly one of them is emitted per image before `generate()` returns.
+ */
+export type GenerationStage =
+  | "queued"
+  | "submitted"
+  | "generating"
+  | "processing"
+  | "done"
+  | "failed";
+
+/**
+ * A progress event, discriminated on `stage`.
+ *
+ * This is NOT MCP progress. The engine and the providers may repeat a value — a
+ * queued image and a submitted image both legitimately carry no number at all —
+ * whereas the protocol requires every notification to increase. `src/mcp/progress.ts`
+ * owns that translation; nothing here should try to be wire-ready.
+ *
+ * The callback that receives these is synchronous and never awaited, so an
+ * exception thrown inside it must not be able to fail a generation.
+ */
+export interface GenerationEvent {
+  stage: GenerationStage;
+  /** Which image of an `-n` batch, zero-based. */
+  index?: number;
+  /** Work units completed. Never decreases within one image. */
+  progress?: number;
+  /** Total work units. Stable once sent. Absent when the engine cannot know it. */
+  total?: number;
+  /** A short human line, already safe to show. */
+  message?: string;
+  /** The `assets.yml` id, set when the event came from a sync run. */
+  assetId?: string;
+}

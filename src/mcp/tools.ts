@@ -1,10 +1,27 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { loadConfig } from "../config/load.js";
+import type { SubpixelConfig } from "../config/schema.js";
 import { ConfigError } from "../core/errors.js";
+import type { EventSink } from "../core/events.js";
 import { redact } from "../core/redact.js";
+import type {
+  GenerateRequest,
+  ImageBackground,
+  ImageFormat,
+  ImageQuality,
+  StyleDefinition,
+} from "../core/types.js";
 import { collectDoctorReport } from "../cli/doctor.js";
+import { buildEditRequest } from "../cli/edit.js";
+import {
+  resolveGenerateDeps,
+  resolveSharedFields,
+  type SharedCliOptions,
+} from "../cli/generate.js";
 import { collectModelReport } from "../cli/models.js";
-import { collectStyleReport } from "../cli/styles.js";
+import { collectStyleReport, resolveStyle } from "../cli/styles.js";
+import { toJsonResult } from "../engine/emit.js";
+import { generate, type ProviderFn } from "../engine/generate.js";
 import { jobsDirFor, readJob } from "./jobs.js";
 
 /**
@@ -329,6 +346,16 @@ export interface ToolDeps {
   cwd?: string;
   /** Where job records live. Defaults to `<cwd>/.subpixel/jobs`. */
   jobsDir?: string;
+  /**
+   * Progress, forwarded straight to the engine.
+   *
+   * Set only on the streaming path, where the host gave a `progressToken`. On the
+   * job path it is absent, because there is no request left to attach a
+   * notification to once the `job_id` has been returned.
+   */
+  onEvent?: EventSink;
+  /** The backend, for tests. Absent means the real resolver chain. */
+  provider?: ProviderFn;
 }
 
 type Handler = (args: Record<string, unknown>, deps: ToolDeps) => Promise<unknown>;
@@ -344,7 +371,92 @@ function cwdOf(deps: ToolDeps): string {
  * A second shape for the same facts is a second thing to keep true, and the CLI
  * reference already documents these.
  */
+/**
+ * Translate the tool's snake_case arguments into the flags the CLI resolver takes.
+ *
+ * Both paths then run the SAME resolution — `resolveSharedFields` for the request
+ * and `resolveGenerateDeps` for the dependencies — so a flag cannot mean one thing
+ * typed at a shell and another sent by an agent.
+ *
+ * Paths are resolved here against the project directory. The CLI builders resolve
+ * relative paths against `process.cwd()`, which is the shell the user typed in; an
+ * MCP server has no such shell, and resolving twice is harmless because the second
+ * resolve is handed an absolute path.
+ */
+function sharedOptionsFrom(args: Record<string, unknown>, cwd: string): SharedCliOptions {
+  const out = args.out as string | undefined;
+  const outDir = args.out_dir as string | undefined;
+  const variants = args.variants as number[] | undefined;
+  return {
+    size: args.size as string | undefined,
+    quality: args.quality as ImageQuality | undefined,
+    background: args.background as ImageBackground | undefined,
+    format: args.format as ImageFormat | undefined,
+    exactSize: args.exact_size as string | undefined,
+    model: args.model as string | undefined,
+    style: args.style as string | undefined,
+    out: out === undefined ? undefined : resolve(cwd, out),
+    outDir: outDir === undefined ? undefined : resolve(cwd, outDir),
+    backend: args.backend as string | undefined,
+    transparent: args.transparent as boolean | undefined,
+    // The CLI takes "400,800" from a shell that has no arrays. The schema takes the
+    // array an agent can actually build, and the one parser stays the CLI's.
+    variants: variants === undefined ? undefined : variants.join(","),
+  };
+}
+
+/**
+ * The shared half of `generate_image` and `edit_image`: everything after the
+ * request has been built.
+ *
+ * `n` is never read. The schema caps it at 1, and the identical-retry guarantee in
+ * the spec holds only while a call buys at most one image.
+ */
+async function runImageTool(
+  args: Record<string, unknown>,
+  deps: ToolDeps,
+  build: (
+    options: SharedCliOptions,
+    style: StyleDefinition | undefined,
+    config: SubpixelConfig,
+    cwd: string,
+  ) => GenerateRequest,
+): Promise<unknown> {
+  const cwd = cwdOf(deps);
+  const { config } = await loadConfig({ cwd });
+  const options = sharedOptionsFrom(args, cwd);
+  const style = resolveStyle(config, options.style ?? config.style);
+  const request = build(options, style, config, cwd);
+
+  // The budget lives in here, which is the reason the helper exists: a handler that
+  // called `generate()` with hand-built dependencies would spend past the project's
+  // own `budget.maxImagesPerRun`.
+  const generateDeps = resolveGenerateDeps(request, { ...options, config, cwd });
+
+  const result = await generate(request, {
+    ...generateDeps,
+    provider: deps.provider,
+    onEvent: deps.onEvent,
+    // No logger and no `warnAlways`. The engine falls back to a silent logger, and
+    // every other writer in this process would be writing to the transport.
+  });
+  return toJsonResult(result, cwd);
+}
+
 export const HANDLERS: Record<string, Handler> = {
+  generate_image: async (args, deps) =>
+    runImageTool(args, deps, (options, style, config, cwd) => ({
+      prompt: args.prompt as string,
+      outputPath: options.out,
+      referenceImages: (args.reference_images as string[] | undefined)?.map((path) =>
+        resolve(cwd, path),
+      ),
+      ...resolveSharedFields(options, style, config),
+    })),
+  edit_image: async (args, deps) =>
+    runImageTool(args, deps, (options, style, config, cwd) =>
+      buildEditRequest(resolve(cwd, args.image as string), args.instruction as string, options, style, config),
+    ),
   list_styles: async (args, deps) => {
     const { config } = await loadConfig({ cwd: cwdOf(deps) });
     return collectStyleReport(config, args.name as string | undefined);

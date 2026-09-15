@@ -10,6 +10,7 @@ export const KNOWN_COMMANDS = [
   "icons",
   "sync",
   "regen",
+  "mcp",
   "help",
 ] as const;
 

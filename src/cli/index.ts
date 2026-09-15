@@ -5,6 +5,7 @@ import { collectModelReport, formatModelReport } from "./models.js";
 import { runEdit } from "./edit.js";
 import { runGenerate } from "./generate.js";
 import { runIcons } from "./icons.js";
+import { runMcp } from "./mcp.js";
 import { runRegen } from "./regen.js";
 import { runSync } from "./sync.js";
 import { normalizeArgv } from "./options.js";
@@ -187,6 +188,11 @@ export async function buildProgram(): Promise<Command> {
     .option("-v, --verbose", "verbose logging on stderr")
     .option("-q, --quiet", "errors only on stderr")
     .action(runEdit);
+
+  program
+    .command("mcp")
+    .description("Run the MCP server on stdio, for an agent host to spawn")
+    .action(runMcp);
 
   return program;
 }

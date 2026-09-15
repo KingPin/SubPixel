@@ -67,6 +67,14 @@ async function call(
   };
 }
 
+/** Two assets, so the concurrent streams have something to interleave. */
+async function manifest(): Promise<void> {
+  await writeFile(
+    join(dir, "assets.yml"),
+    "assets:\n  - id: hero\n    prompt: a dashboard\n  - id: icon\n    prompt: a glyph\n",
+  );
+}
+
 describe("the MCP server", () => {
   it("lists every tool with its schema", async () => {
     const { tools } = await (await connect({})).listTools();
@@ -245,6 +253,75 @@ describe("the MCP server", () => {
     }
 
     expect(written).toEqual([]);
+  });
+
+  it("reports asset drift without a provider to spend with", async () => {
+    await manifest();
+    const provider = vi.fn(async () => IMAGE);
+
+    const outcome = await call(await connect({ provider: provider as never }), "sync_assets", {
+      check: true,
+    });
+
+    expect(outcome.body.drift).toBe(true);
+    expect((outcome.body.statuses as Array<{ id: string }>).map((status) => status.id)).toEqual([
+      "hero",
+      "icon",
+    ]);
+    expect(provider).not.toHaveBeenCalled();
+  });
+
+  it("generates once per drifted asset and names each one in the progress", async () => {
+    await manifest();
+    const provider = vi.fn(async (request: { prompt: string }) => ({
+      ...IMAGE,
+      effectivePrompt: request.prompt,
+    }));
+
+    const outcome = await call(
+      await connect({ provider: provider as never }),
+      "sync_assets",
+      {},
+      { watch: true },
+    );
+
+    expect(provider).toHaveBeenCalledTimes(2);
+    expect(outcome.body.generated).toEqual(["hero", "icon"]);
+    const messages = outcome.progress.map((event) => event.message ?? "").join("\n");
+    expect(messages).toContain("hero");
+    expect(messages).toContain("icon");
+    expect(new Set(outcome.progress.map((event) => event.progress)).size).toBe(
+      outcome.progress.length,
+    );
+  });
+
+  it("hands back one job for a whole slow sync run", async () => {
+    await manifest();
+    const provider = async () => {
+      await new Promise((done) => setTimeout(done, 200));
+      return IMAGE;
+    };
+
+    const outcome = await call(await connect({ provider: provider as never }), "sync_assets", {});
+
+    expect(outcome.body.status).toBe("running");
+    expect(outcome.body.tool).toBe("sync_assets");
+  });
+
+  it("refuses an over-budget sync before any provider is reached", async () => {
+    await manifest();
+    await writeFile(
+      join(dir, "subpixel.config.json"),
+      JSON.stringify({ mcp: { cutoverMs: 60 }, budget: { maxImagesPerRun: 1 } }),
+    );
+    const provider = vi.fn(async () => IMAGE);
+
+    const outcome = await call(await connect({ provider: provider as never }), "sync_assets", {});
+
+    expect(outcome.isError).toBe(true);
+    expect((outcome.body.error as { code: string }).code).toBe("CONFIG_ERROR");
+    expect((outcome.body.error as { message: string }).message).toContain("maxImagesPerRun");
+    expect(provider).not.toHaveBeenCalled();
   });
 
   it("lets the environment override the configured cut-over", async () => {

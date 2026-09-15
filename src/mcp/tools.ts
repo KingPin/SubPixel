@@ -11,6 +11,8 @@ import type {
   ImageQuality,
   StyleDefinition,
 } from "../core/types.js";
+import { ASSETS_FILENAME, loadAssets } from "../assets/load.js";
+import { syncAssets } from "../assets/sync.js";
 import { collectDoctorReport } from "../cli/doctor.js";
 import { buildEditRequest } from "../cli/edit.js";
 import {
@@ -19,6 +21,8 @@ import {
   type SharedCliOptions,
 } from "../cli/generate.js";
 import { collectModelReport } from "../cli/models.js";
+import { parseBackend } from "../cli/options.js";
+import { checkAssets } from "../cli/sync.js";
 import { collectStyleReport, resolveStyle } from "../cli/styles.js";
 import { toJsonResult } from "../engine/emit.js";
 import { generate, type ProviderFn } from "../engine/generate.js";
@@ -457,6 +461,38 @@ export const HANDLERS: Record<string, Handler> = {
     runImageTool(args, deps, (options, style, config, cwd) =>
       buildEditRequest(resolve(cwd, args.image as string), args.instruction as string, options, style, config),
     ),
+  sync_assets: async (args, deps) => {
+    const cwd = cwdOf(deps);
+    const check = args.check === true;
+    const force = args.force === true;
+    if (check && force) {
+      throw new ConfigError("check reports drift and force regenerates. Pass one or the other.");
+    }
+
+    // Warnings from the manifest loader go nowhere on purpose. The only two streams
+    // here are the transport and stderr, and a host shows neither to the model.
+    const loaded = await loadAssets(resolve(cwd, (args.file as string | undefined) ?? ASSETS_FILENAME), () => {});
+
+    // `checkAssets` and not `syncAssets({check})`: the zero-quota guarantee is that
+    // this path is handed no provider and no generation dependencies at all, rather
+    // than being handed them and asked not to use them.
+    if (check) {
+      const statuses = await checkAssets(loaded);
+      return { drift: statuses.some((status) => status.state !== "current"), statuses };
+    }
+
+    // Drift is reported, never thrown. An agent that asked what is out of date has
+    // been answered, and `drift: true` is the answer, not a failure.
+    const { failure: _failure, ...report } = await syncAssets(loaded, {
+      force,
+      ...(parseBackend(args.backend as string | undefined)
+        ? { backend: parseBackend(args.backend as string | undefined)! }
+        : {}),
+      ...(deps.provider ? { provider: deps.provider } : {}),
+      ...(deps.onEvent ? { onEvent: deps.onEvent } : {}),
+    });
+    return report;
+  },
   list_styles: async (args, deps) => {
     const { config } = await loadConfig({ cwd: cwdOf(deps) });
     return collectStyleReport(config, args.name as string | undefined);

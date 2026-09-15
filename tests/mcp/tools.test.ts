@@ -10,7 +10,7 @@ vi.mock("../../src/cli/doctor.js", async (importOriginal) => ({
   collectDoctorReport,
 }));
 
-const { TOOLS, callTool, validateArgs } = await import("../../src/mcp/tools.js");
+const { TOOLS, HANDLERS, callTool, validateArgs } = await import("../../src/mcp/tools.js");
 const { buildProgram } = await import("../../src/cli/index.js");
 const { createJob, completeJob, jobsDirFor } = await import("../../src/mcp/jobs.js");
 const { ConfigError } = await import("../../src/core/errors.js");
@@ -207,9 +207,9 @@ describe("the tool dispatcher", () => {
     await expect(callTool("draw_me_a_sheep", {})).rejects.toThrow(/Unknown tool/);
   });
 
-  it("refuses a declared tool this build cannot run yet", async () => {
-    await expect(callTool("sync_assets", { check: true })).rejects.toThrow(
-      /declared but not available/,
-    );
+  it("can run every tool it declares", () => {
+    // A tool in the list with no handler is a tool a host will call and be told
+    // does not exist, which is worse than never advertising it.
+    expect(TOOLS.map((tool) => tool.name).sort()).toEqual(Object.keys(HANDLERS).sort());
   });
 });

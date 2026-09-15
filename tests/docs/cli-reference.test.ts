@@ -73,4 +73,23 @@ describe("the CLI reference", () => {
       }
     }
   });
+
+  it("registers every flag the tables document", async () => {
+    // The other direction, and the one that rots silently: a flag dropped from the
+    // CLI stays in the reference, so the docs promise something that dies as an
+    // unknown option. Only the first cell of a table row is scanned — that is where
+    // a row names its own flag; prose and the right-hand cells reference flags that
+    // belong to other commands.
+    const { buildProgram } = await import("../../src/cli/index.js");
+    const program = await buildProgram();
+    const registered = new Set(
+      [program, ...program.commands].flatMap((c) => c.options.map((o) => o.long).filter(Boolean)),
+    );
+    const documented = new Set<string>();
+    for (const row of DOC.matchAll(/^\| `([^`]+)` \|/gm)) {
+      for (const flag of row[1]!.matchAll(/--[a-z][a-z-]*/g)) documented.add(flag[0]);
+    }
+    expect(documented.size).toBeGreaterThan(10);
+    expect([...documented].filter((flag) => !registered.has(flag))).toEqual([]);
+  });
 });

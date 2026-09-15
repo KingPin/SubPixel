@@ -118,7 +118,30 @@ jobs:
       # The bytes that were tested are the bytes that ship. `npm publish <dir>` would
       # re-run `prepack` and rebuild them — and there is no source tree here to rebuild
       # from — so the tarball is published by path, after proving it survived transit.
+      # A version already on the registry is not a failure worth a red release. It
+      # happens on a re-run after a flake in the upload, and on the tag for a version
+      # that was published by hand — as 0.1.0 was, because trusted publishing is
+      # configured on a package's settings page and so cannot mint the package that
+      # page belongs to. npm answers EPUBLISHCONFLICT either way; this says the same
+      # thing without marking a release that is, in fact, out as broken.
+      #
+      # Read from the tarball, not from a checkout: this job has no source tree, and
+      # the point of publishing by path is that the bytes are the ones that were
+      # tested. `npm view` exits non-zero for a package that does not exist yet, which
+      # is exactly the case that must publish.
+      - name: Check whether the version is already on the registry
+        id: registry
+        run: |
+          tar -xzOf ./*.tgz package/package.json > pkg.json
+          name="$(node -p 'require("./pkg.json").name')"
+          version="$(node -p 'require("./pkg.json").version')"
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "$name@$version is already published; skipping the publish step." >&2
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish
+        if: steps.registry.outputs.exists != 'true'
         run: |
           sha256sum --check ./*.tgz.sha256
           extra=""

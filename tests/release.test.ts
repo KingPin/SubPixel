@@ -21,6 +21,21 @@ describe("the release workflow", () => {
     expect(RELEASE.permissions).toEqual({ "id-token": "write", contents: "read" });
   });
 
+  it("skips the publish when the registry already has the version", () => {
+    // Two real cases hand this job a version npm already holds: a re-run after the
+    // upload flaked, and the tag for a version published by hand — as 0.1.0 was,
+    // because a trusted publisher is configured on a package's settings page and so
+    // cannot mint the package that page belongs to. Ungated, the step dies on
+    // EPUBLISHCONFLICT and a release that is actually out reads as broken.
+    const steps = RELEASE.jobs.publish.steps as { name?: string; id?: string; if?: string }[];
+    const check = steps.findIndex((step) => step.id === "registry");
+    const publish = steps.findIndex((step) => step.name === "Publish");
+    expect(check).toBeGreaterThanOrEqual(0);
+    expect(steps[publish]?.if).toBe("steps.registry.outputs.exists != 'true'");
+    // The gate is worthless below the step it gates.
+    expect(check).toBeLessThan(publish);
+  });
+
   it("carries no npm token", () => {
     // Trusted publishing over OIDC needs no secret. A token appearing here means
     // someone reintroduced a credential the release does not need.

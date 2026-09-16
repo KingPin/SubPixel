@@ -1,8 +1,19 @@
 import { ConfigError } from "../core/errors.js";
 import { redact } from "../core/redact.js";
-import type { BackendName, ImageBackground, ImageFormat, ImageQuality } from "../core/types.js";
+import type {
+  BackendName,
+  ImageBackground,
+  ImageFormat,
+  ImageQuality,
+} from "../core/types.js";
 import type { StyleDefinition } from "../core/types.js";
-import { STYLE_TEXT_FIELDS } from "../core/types.js";
+import {
+  BACKEND_NAMES,
+  IMAGE_BACKGROUNDS,
+  IMAGE_FORMATS,
+  IMAGE_QUALITIES,
+  STYLE_TEXT_FIELDS,
+} from "../core/types.js";
 
 // Re-exported from their new home in core so config consumers do not all have to
 // move. The engine composes styles and must not import the config layer, so the
@@ -41,12 +52,22 @@ const CONFIG_KEYS = [
   "styles",
 ] as const;
 
-const FORMATS: ImageFormat[] = ["png", "jpeg", "webp"];
-const QUALITIES: ImageQuality[] = ["low", "medium", "high", "auto"];
-const BACKGROUNDS: ImageBackground[] = ["transparent", "opaque", "auto"];
-const BACKENDS = ["codex-http", "codex-exec", "api", "auto"];
+// From core, not copied. A value added there but not here is one Commander, the MCP
+// schema, and the manifest validator accept and project config rejects — which is
+// exactly the drift the single declaration was made to stop.
+const FORMATS = IMAGE_FORMATS;
+const QUALITIES = IMAGE_QUALITIES;
+const BACKGROUNDS = IMAGE_BACKGROUNDS;
+// "auto" is a config-only value: it means "pick one", which is not something a
+// resolved request or a sidecar can hold.
+const BACKENDS = [...BACKEND_NAMES, "auto"] as const;
 
-function fail(source: string, key: string, expected: string, received: unknown): never {
+function fail(
+  source: string,
+  key: string,
+  expected: string,
+  received: unknown,
+): never {
   throw new ConfigError(
     `${source}: "${key}" must be ${expected}, received ${JSON.stringify(received)}.`,
   );
@@ -77,7 +98,11 @@ function asPositiveInt(value: unknown, source: string, key: string): number {
   return value;
 }
 
-export function validateStyle(value: unknown, source: string, name: string): StyleDefinition {
+export function validateStyle(
+  value: unknown,
+  source: string,
+  name: string,
+): StyleDefinition {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     fail(source, `styles.${name}`, "an object", value);
   }
@@ -89,15 +114,31 @@ export function validateStyle(value: unknown, source: string, name: string): Sty
     if (raw === undefined) continue;
     style[field] = asString(raw, source, `styles.${name}.${field}`);
   }
-  if (input.size !== undefined) style.size = asString(input.size, source, `styles.${name}.size`);
+  if (input.size !== undefined)
+    style.size = asString(input.size, source, `styles.${name}.size`);
   if (input.quality !== undefined) {
-    style.quality = asEnum(input.quality, QUALITIES, source, `styles.${name}.quality`);
+    style.quality = asEnum(
+      input.quality,
+      QUALITIES,
+      source,
+      `styles.${name}.quality`,
+    );
   }
   if (input.background !== undefined) {
-    style.background = asEnum(input.background, BACKGROUNDS, source, `styles.${name}.background`);
+    style.background = asEnum(
+      input.background,
+      BACKGROUNDS,
+      source,
+      `styles.${name}.background`,
+    );
   }
   if (input.format !== undefined) {
-    style.format = asEnum(input.format, FORMATS, source, `styles.${name}.format`);
+    style.format = asEnum(
+      input.format,
+      FORMATS,
+      source,
+      `styles.${name}.format`,
+    );
   }
   return style;
 }
@@ -128,23 +169,44 @@ export function validateConfig(
     }
   }
 
-  if (input.outDir !== undefined) config.outDir = asString(input.outDir, source, "outDir");
-  if (input.style !== undefined) config.style = asString(input.style, source, "style");
-  if (input.format !== undefined) config.format = asEnum(input.format, FORMATS, source, "format");
+  if (input.outDir !== undefined)
+    config.outDir = asString(input.outDir, source, "outDir");
+  if (input.style !== undefined)
+    config.style = asString(input.style, source, "style");
+  if (input.format !== undefined)
+    config.format = asEnum(input.format, FORMATS, source, "format");
   if (input.backend !== undefined) {
-    config.backend = asEnum(input.backend, BACKENDS, source, "backend") as BackendName | "auto";
+    config.backend = asEnum(input.backend, BACKENDS, source, "backend") as
+      | BackendName
+      | "auto";
   }
   if (input.concurrency !== undefined) {
-    config.concurrency = asPositiveInt(input.concurrency, source, "concurrency");
+    config.concurrency = asPositiveInt(
+      input.concurrency,
+      source,
+      "concurrency",
+    );
   }
   if (input.budget !== undefined) {
     const budget = input.budget;
-    if (typeof budget !== "object" || budget === null || Array.isArray(budget)) {
+    if (
+      typeof budget !== "object" ||
+      budget === null ||
+      Array.isArray(budget)
+    ) {
       fail(source, "budget", "an object", budget);
     }
     const max = (budget as Record<string, unknown>).maxImagesPerRun;
     config.budget =
-      max === undefined ? {} : { maxImagesPerRun: asPositiveInt(max, source, "budget.maxImagesPerRun") };
+      max === undefined
+        ? {}
+        : {
+            maxImagesPerRun: asPositiveInt(
+              max,
+              source,
+              "budget.maxImagesPerRun",
+            ),
+          };
   }
   if (input.mcp !== undefined) {
     const mcp = input.mcp;
@@ -153,11 +215,17 @@ export function validateConfig(
     }
     const cutover = (mcp as Record<string, unknown>).cutoverMs;
     config.mcp =
-      cutover === undefined ? {} : { cutoverMs: asPositiveInt(cutover, source, "mcp.cutoverMs") };
+      cutover === undefined
+        ? {}
+        : { cutoverMs: asPositiveInt(cutover, source, "mcp.cutoverMs") };
   }
   if (input.styles !== undefined) {
     const styles = input.styles;
-    if (typeof styles !== "object" || styles === null || Array.isArray(styles)) {
+    if (
+      typeof styles !== "object" ||
+      styles === null ||
+      Array.isArray(styles)
+    ) {
       fail(source, "styles", "an object", styles);
     }
     config.styles = Object.fromEntries(

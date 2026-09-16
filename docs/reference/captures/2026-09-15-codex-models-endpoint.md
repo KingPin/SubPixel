@@ -175,14 +175,28 @@ stale. That advice is correct and remains the answer.
 
 ## Reproducing
 
+The isolated home holds a copy of your live `auth.json`, and the CA bundle lets
+anything using it have its TLS decrypted. Neither may outlive the run, so the
+scratch directory is created by `mktemp` outside the working tree and removed by
+a `trap` that fires on a clean exit, a `Ctrl-C` and a kill alike.
+
 ```sh
 # 1. mitmdump with a redacting addon on 127.0.0.1:8792
-# 2. a CA bundle the Rust client will accept
-cat /etc/ssl/certs/ca-certificates.crt ~/.mitmproxy/mitmproxy-ca-cert.pem > ca-bundle.pem
-# 3. an isolated CODEX_HOME holding only a copy of auth.json, so the fetch is forced
-env CODEX_HOME=./codexhome HTTPS_PROXY=http://127.0.0.1:8792 \
-    SSL_CERT_FILE=./ca-bundle.pem codex debug models > catalogue.json
+# 2. a scratch dir that cleans itself up, whatever happens
+work=$(mktemp -d)
+trap 'shred -u "$work/codexhome/auth.json" 2>/dev/null; rm -rf "$work"' EXIT INT TERM HUP
+# 3. a CA bundle the Rust client will accept
+cat /etc/ssl/certs/ca-certificates.crt ~/.mitmproxy/mitmproxy-ca-cert.pem > "$work/ca-bundle.pem"
+# 4. an isolated CODEX_HOME holding only a copy of auth.json, so the fetch is forced
+mkdir -m 700 "$work/codexhome"
+install -m 600 ~/.codex/auth.json "$work/codexhome/auth.json"
+env CODEX_HOME="$work/codexhome" HTTPS_PROXY=http://127.0.0.1:8792 \
+    SSL_CERT_FILE="$work/ca-bundle.pem" codex debug models > catalogue.json
 ```
 
-A second run needs `fetched_at` in `codexhome/models_cache.json` backdated past
-24h, or the CLI answers from the cache and makes no request at all.
+Run it in one shell session, start to finish. Splitting it across sessions loses
+`$work` and the `trap` with it, and the copy of `auth.json` stays on disk.
+`catalogue.json` is the one output meant to survive; it carries no credential.
+
+A second run needs `fetched_at` in `$work/codexhome/models_cache.json` backdated
+past 24h, or the CLI answers from the cache and makes no request at all.

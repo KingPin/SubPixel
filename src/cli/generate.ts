@@ -13,7 +13,7 @@ import type {
 import type { SubpixelConfig } from "../config/schema.js";
 import { cacheKey } from "../engine/cache.js";
 import { emit, type EmitFormat } from "../engine/emit.js";
-import { generate, type GenerateDeps } from "../engine/generate.js";
+import { generate, preflightPostProcessing, type GenerateDeps } from "../engine/generate.js";
 import { augmentPrompt } from "../engine/prompt.js";
 import { loadReferences } from "../engine/references.js";
 import { hasCodexBinary } from "../providers/codex-exec.js";
@@ -209,6 +209,13 @@ export async function runGenerateRequest(
   const { outDir, backend, noCache, overwrite } = deps;
 
   if (options.dryRun) {
+    // The same boundary check the real run makes, and for the same reason it exists:
+    // a preview whose whole job is "tell me what would happen before I spend quota"
+    // is worth nothing if it reports a clean plan for a request that cannot run.
+    // Without it `--exact-size nonsense --dry-run` exited 0 and a malformed `--size`
+    // failed later, inside aspect-ratio arithmetic, with no flag named.
+    await preflightPostProcessing(request);
+
     const resolved = await resolveModel({ override: options.model });
     const chain = resolveChain({
       hasCodexBinary: await hasCodexBinary(),

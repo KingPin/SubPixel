@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Command } from "commander";
+import { Command, Option } from "commander";
 import { collectDoctorReport, formatDoctorReport } from "./doctor.js";
 import { collectModelReport, formatModelReport } from "./models.js";
 import { runEdit } from "./edit.js";
@@ -13,7 +13,26 @@ import { normalizeArgv } from "./options.js";
 import { collectStyleReport, formatStyleReport } from "./styles.js";
 import { loadConfig } from "../config/load.js";
 import { redact } from "../core/redact.js";
+import { IMAGE_BACKGROUNDS, IMAGE_FORMATS, IMAGE_QUALITIES } from "../core/types.js";
 import { packageVersion } from "../core/version.js";
+
+/**
+ * An enum flag that refuses a value it does not know, before the command body runs.
+ *
+ * These descriptions have always listed the accepted values; nothing enforced them.
+ * `--quality ultra` was therefore carried all the way into the HTTP image-tool
+ * parameters verbatim, so the first thing to notice the typo was the endpoint — after
+ * the request was sent, and on the user's quota. Commander answers it locally and for
+ * free, and `choices()` prints the valid set in the error.
+ *
+ * The lists come from `core/types.ts`, which is also where the types are derived from,
+ * so a value added there cannot be missing here.
+ */
+function choice(flags: string, description: string, values: readonly string[]): Option {
+  return new Option(flags, description).choices([...values]);
+}
+
+const EMIT_FORMATS = ["path", "markdown", "jsx", "html"] as const;
 
 export async function buildProgram(): Promise<Command> {
   const program = new Command();
@@ -81,9 +100,11 @@ export async function buildProgram(): Promise<Command> {
     .argument("<prompt>", "what to draw")
     .description("Generate an image from a prompt")
     .option("--size <WxH>", "requested generation size, e.g. 1024x1536")
-    .option("--quality <level>", "low | medium | high | auto")
-    .option("--background <mode>", "transparent | opaque | auto")
-    .option("--format <fmt>", "png | jpeg | webp (default: the config, else png)")
+    .addOption(choice("--quality <level>", "generation quality", IMAGE_QUALITIES))
+    .addOption(choice("--background <mode>", "background handling", IMAGE_BACKGROUNDS))
+    .addOption(
+      choice("--format <fmt>", "output format (default: the config, else png)", IMAGE_FORMATS),
+    )
     .option("--exact-size <WxH>", "post-process to exactly this size (requires sharp)")
     .option(
       "--transparent",
@@ -101,7 +122,7 @@ export async function buildProgram(): Promise<Command> {
     .option("--out-dir <dir>", "directory for generated images (default: the config, else the working directory)")
     .option("-n <count>", "number of images", "1")
     .option("--json", "emit the result as JSON on stdout")
-    .option("--emit <format>", "path | markdown | jsx | html", "path")
+    .addOption(choice("--emit <format>", "how to print the result", EMIT_FORMATS).default("path"))
     .option("--no-cache", "ignore the cache for this request")
     .option("--overwrite", "replace an existing output file")
     .option("--no-overwrite", "write a -v2 sibling instead of replacing (the default)")
@@ -125,7 +146,7 @@ export async function buildProgram(): Promise<Command> {
     .option("-b, --backend <name>", "codex-http | codex-exec | auto")
     .option("-o, --out <path>", "write to this path instead of over the original")
     .option("--json", "emit the result as JSON on stdout")
-    .option("--emit <format>", "path | markdown | jsx | html", "path")
+    .addOption(choice("--emit <format>", "how to print the result", EMIT_FORMATS).default("path"))
     .option("-v, --verbose", "verbose logging on stderr")
     .option("-q, --quiet", "errors only on stderr")
     .action(runRegen);
@@ -159,9 +180,11 @@ export async function buildProgram(): Promise<Command> {
     .argument("<instruction>", "what to change")
     .description("Edit an existing image")
     .option("--size <WxH>", "requested generation size, e.g. 1024x1536")
-    .option("--quality <level>", "low | medium | high | auto")
-    .option("--background <mode>", "transparent | opaque | auto")
-    .option("--format <fmt>", "png | jpeg | webp (default: the config, else png)")
+    .addOption(choice("--quality <level>", "generation quality", IMAGE_QUALITIES))
+    .addOption(choice("--background <mode>", "background handling", IMAGE_BACKGROUNDS))
+    .addOption(
+      choice("--format <fmt>", "output format (default: the config, else png)", IMAGE_FORMATS),
+    )
     .option("--style <name>", "apply a named style from the project config")
     .option("--exact-size <WxH>", "resize the result to exactly this size")
     .option(
@@ -182,7 +205,7 @@ export async function buildProgram(): Promise<Command> {
     .option("--stall-timeout <sec>", "give up after this many seconds with no stream activity")
     .option("--concurrency <n>", "maximum simultaneous requests (default: the config, else 2)")
     .option("--json", "emit a single JSON object on stdout")
-    .option("--emit <format>", "path | markdown | jsx | html", "path")
+    .addOption(choice("--emit <format>", "how to print the result", EMIT_FORMATS).default("path"))
     .option("-v, --verbose", "verbose logging on stderr")
     .option("-q, --quiet", "errors only on stderr")
     .action(runEdit);

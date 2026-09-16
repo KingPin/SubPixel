@@ -64,6 +64,18 @@ export interface Dimensions {
   height: number;
 }
 
+/**
+ * The largest dimension either axis may name.
+ *
+ * Generous on purpose — the endpoint tops out far below this and `--exact-size` is a
+ * local resize somebody may legitimately want at print scale. What it is here to stop
+ * is the arithmetic, not the ambition: the regex below accepts digits, and enough of
+ * them parse to `Infinity`, which is positive, survives the old check, and reaches
+ * `gcd` — where `Infinity % Infinity` is `NaN`, no recursion ever reaches `b === 0`,
+ * and the process dies of a `RangeError` instead of naming the bad flag.
+ */
+const MAX_DIMENSION = 16_384;
+
 export function parseSize(size: string): Dimensions {
   const match = /^(\d+)[xX](\d+)$/.exec(size.trim());
   if (!match) {
@@ -73,6 +85,11 @@ export function parseSize(size: string): Dimensions {
   const height = Number(match[2]);
   if (width <= 0 || height <= 0) {
     throw new ConfigError(`Invalid size "${size}". Both dimensions must be positive.`);
+  }
+  if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
+    throw new ConfigError(
+      `Invalid size "${size}". Both dimensions must be at most ${MAX_DIMENSION}.`,
+    );
   }
   return { width, height };
 }

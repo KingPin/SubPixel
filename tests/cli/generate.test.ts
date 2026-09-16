@@ -5,7 +5,13 @@ import { describe, expect, it, vi } from "vitest";
 
 // vi.mock is hoisted, so the fake has to be declared with it, not above it.
 const generate = vi.fn();
-vi.mock("../../src/engine/generate.js", () => ({ generate }));
+// Only `generate` is faked. `preflightPostProcessing` is the real validation the
+// dry-run path runs, and stubbing it would make these tests assert a preview that
+// never checks anything.
+vi.mock("../../src/engine/generate.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/engine/generate.js")>()),
+  generate,
+}));
 
 const { resolveSharedFields, runGenerate } = await import("../../src/cli/generate.js");
 const { loadConfig } = await import("../../src/config/load.js");

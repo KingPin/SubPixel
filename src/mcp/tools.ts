@@ -4,6 +4,7 @@ import type { SubpixelConfig } from "../config/schema.js";
 import { ConfigError } from "../core/errors.js";
 import type { EventSink } from "../core/events.js";
 import { redact } from "../core/redact.js";
+import { IMAGE_BACKGROUNDS, IMAGE_FORMATS, IMAGE_QUALITIES } from "../core/types.js";
 import type {
   GenerateRequest,
   ImageBackground,
@@ -91,17 +92,17 @@ const IMAGE_PROPERTIES: Record<string, PropertySchema> = {
   quality: {
     type: "string",
     description: "Rendering effort. Best effort.",
-    enum: ["low", "medium", "high", "auto"],
+    enum: IMAGE_QUALITIES,
   },
   background: {
     type: "string",
     description: "Background handling. Best effort.",
-    enum: ["transparent", "opaque", "auto"],
+    enum: IMAGE_BACKGROUNDS,
   },
   format: {
     type: "string",
     description: "Output file format. Defaults to the project config, else png.",
-    enum: ["png", "jpeg", "webp"],
+    enum: IMAGE_FORMATS,
   },
   exact_size: {
     type: "string",

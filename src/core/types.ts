@@ -1,7 +1,21 @@
-export type ImageQuality = "low" | "medium" | "high" | "auto";
-export type ImageBackground = "transparent" | "opaque" | "auto";
-export type ImageFormat = "png" | "jpeg" | "webp";
-export type BackendName = "codex-http" | "codex-exec" | "api";
+/**
+ * The accepted values, as data and as types, from one declaration each.
+ *
+ * Runtime arrays rather than bare unions because three layers need to CHECK a value
+ * a user supplied, not merely describe one: Commander rejecting `--quality ultra` at
+ * parse time, the manifest validator reading a sidecar off disk, and the MCP schema.
+ * Each of those used to carry its own copy of the list, and a copy is a list that
+ * goes stale on the day a value is added.
+ */
+export const IMAGE_QUALITIES = ["low", "medium", "high", "auto"] as const;
+export const IMAGE_BACKGROUNDS = ["transparent", "opaque", "auto"] as const;
+export const IMAGE_FORMATS = ["png", "jpeg", "webp"] as const;
+export const BACKEND_NAMES = ["codex-http", "codex-exec", "api"] as const;
+
+export type ImageQuality = (typeof IMAGE_QUALITIES)[number];
+export type ImageBackground = (typeof IMAGE_BACKGROUNDS)[number];
+export type ImageFormat = (typeof IMAGE_FORMATS)[number];
+export type BackendName = (typeof BACKEND_NAMES)[number];
 
 /**
  * One named style.

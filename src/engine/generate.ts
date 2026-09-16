@@ -46,6 +46,7 @@ import {
   probeDimensions,
   sharpAvailable,
 } from "./sharpx.js";
+import { parseSize } from "./prompt.js";
 
 export type ProviderFn = (
   request: GenerateRequest,
@@ -223,6 +224,10 @@ export async function preflightPostProcessing(request: GenerateRequest): Promise
       "transparent cannot produce JPEG, which has no alpha channel. Use png or webp.",
     );
   }
+  // `--size` never went through the parser. It is mirrored into the prompt by
+  // `augmentPrompt`, which calls `describeAspect` on it, so a malformed value failed
+  // deep in aspect-ratio arithmetic rather than here where the flag can be named.
+  if (request.size) parseSize(request.size);
   await preflightExactSize(request.exactSize);
   // Same reasoning as --exact-size: discovering a missing optional dependency after
   // the image is generated costs a unit of quota for an image the user never gets.

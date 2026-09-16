@@ -2,7 +2,13 @@ import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { atomicWrite } from "../core/fsx.js";
 import { redact } from "../core/redact.js";
-import { STYLE_TEXT_FIELDS } from "../core/types.js";
+import {
+  BACKEND_NAMES,
+  IMAGE_BACKGROUNDS,
+  IMAGE_FORMATS,
+  IMAGE_QUALITIES,
+  STYLE_TEXT_FIELDS,
+} from "../core/types.js";
 import { isSafeVariantSuffix } from "./variants.js";
 import type {
   BackendName,
@@ -141,10 +147,10 @@ export async function writeManifest(imagePath: string, entry: ManifestEntry): Pr
   await atomicWrite(manifestPathFor(imagePath), redact(`${JSON.stringify(record, null, 2)}\n`));
 }
 
-const FORMATS: readonly string[] = ["png", "jpeg", "webp"];
-const BACKENDS: readonly string[] = ["codex-http", "codex-exec", "api"];
-const QUALITIES: readonly string[] = ["low", "medium", "high", "auto"];
-const BACKGROUNDS: readonly string[] = ["transparent", "opaque", "auto"];
+const FORMATS: readonly string[] = IMAGE_FORMATS;
+const BACKENDS: readonly string[] = BACKEND_NAMES;
+const QUALITIES: readonly string[] = IMAGE_QUALITIES;
+const BACKGROUNDS: readonly string[] = IMAGE_BACKGROUNDS;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

@@ -111,11 +111,25 @@ The catalogue as returned:
 cursor, no `has_more`, no `Link` header. The CLI's own decoder agrees — the
 binary carries `struct ModelsResponse with 1 element`.
 
-**Deprecation: by omission, or by `visibility: "hide"`.** No `deprecated`,
-`retired` or `sunset` field exists on any descriptor. `upgrade` is present and
-`null` on every model; its populated shape was not observed, so nothing may be
-inferred from it. A retired model simply stops appearing, which is what the
-resolver's advance-and-warn recovery already assumes.
+**Deprecation: no field carries it, and the retirement signal is unverified.**
+Observed: no `deprecated`, `retired` or `sunset` field exists on any descriptor,
+and `upgrade` is present and `null` on all seven, so its populated shape says
+nothing either.
+
+Not observed: a model being retired. That takes two catalogues far enough apart
+to contain a change, and this is one snapshot. Both candidate signals therefore
+remain inferences, and neither should be relied on as a contract:
+
+- **`visibility: "hide"`.** Seen on `gpt-reserve` and `codex-auto-review`. Both
+  read as internal or special-purpose rather than withdrawn — `codex-auto-review`
+  is a job the CLI runs for itself. So `hide` is better evidenced as "not offered
+  in the picker" than as "on the way out".
+- **Omission.** Plausible, unobserved.
+
+Nothing in `subpixel` needs this resolved. The resolver never asks whether a
+model is deprecated: it sends a candidate, and a `ModelRejected` advances to the
+next. That recovery covers omission, `hide`, and any third mechanism this capture
+did not see. Confirm the signal before writing code that branches on it.
 
 **Authentication: the bearer token plus the account id, both from `auth.json`.**
 `tokens.access_token` goes in `authorization`, `tokens.account_id` in

@@ -50,6 +50,12 @@ Body, structurally:
 { "models": [ /* 7 descriptors */ ] }
 ```
 
+The raw 359,965-byte body is not kept here and was not retained after the run.
+What is recorded below is one descriptor, the union of keys across all seven, and
+the catalogue table — enough to write the resolver against, not enough for a
+reader to re-derive the schema independently. To get the body, re-run the
+procedure under "Reproducing"; `catalogue.json` is it.
+
 One descriptor, verbatim except for the prose fields, which are cut for length:
 
 ```json

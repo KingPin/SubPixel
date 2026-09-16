@@ -93,6 +93,39 @@ export interface Writer {
    * the harness silently ignores.
    */
   write(existing: string | undefined, ctx: InitContext): string;
+  /**
+   * Subpixel's own contribution to the file, for `--dry-run` to print.
+   *
+   * `write()` returns the MERGED file, which for every target we merge into is
+   * mostly somebody else's configuration: other MCP servers, their `env` blocks, and
+   * whatever tokens those blocks hold. Printing it puts those on stdout, into
+   * scrollback, and into whatever transcript captured the run — by way of the one
+   * command a user runs BECAUSE it is the safe one.
+   *
+   * So a merging writer declares the entry it adds and the dry run prints that
+   * instead. It is not a redaction pass that has to recognise a secret; the unrelated
+   * configuration is never in the string to begin with.
+   *
+   * Absent means the writer owns its whole file, so the merged output is already
+   * nothing but ours and is safe to print in full.
+   */
+  preview?(ctx: InitContext): string;
+}
+
+/**
+ * The `write`/`preview` pair for a harness that keeps servers in a JSON object.
+ *
+ * One declaration rather than two: an entry that drifts from its own preview would
+ * print a promise the write does not keep.
+ */
+function serverWriter(
+  key: string,
+  entry: Record<string, unknown>,
+): Pick<Writer, "write" | "preview"> {
+  return {
+    write: (existing, ctx) => mergeServerEntry(existing, ctx.dest, key, entry),
+    preview: () => `${JSON.stringify({ [key]: { subpixel: entry } }, null, 2)}\n`,
+  };
 }
 
 /**
@@ -222,11 +255,10 @@ export const WRITERS: Writer[] = [
       path: join(ctx.home, ".claude.json"),
       marker: join(ctx.home, ".claude"),
     }),
-    write: (existing, ctx) =>
-      mergeServerEntry(existing, ctx.dest, "mcpServers", {
-        command: MCP_COMMAND,
-        args: MCP_ARGS,
-      }),
+    ...serverWriter("mcpServers", {
+      command: MCP_COMMAND,
+      args: MCP_ARGS,
+    }),
   },
   {
     // Destination: .cursor/mcp.json (project-scoped)
@@ -243,12 +275,11 @@ export const WRITERS: Writer[] = [
       path: join(ctx.home, ".cursor", "mcp.json"),
       marker: join(ctx.home, ".cursor"),
     }),
-    write: (existing, ctx) =>
-      mergeServerEntry(existing, ctx.dest, "mcpServers", {
-        type: "stdio",
-        command: MCP_COMMAND,
-        args: MCP_ARGS,
-      }),
+    ...serverWriter("mcpServers", {
+      type: "stdio",
+      command: MCP_COMMAND,
+      args: MCP_ARGS,
+    }),
   },
   {
     // Destination: ~/.codeium/windsurf/mcp_config.json (USER-scoped)
@@ -260,11 +291,10 @@ export const WRITERS: Writer[] = [
     title: "Windsurf MCP server",
     scope: "user",
     path: (ctx) => join(ctx.home, ".codeium", "windsurf", "mcp_config.json"),
-    write: (existing, ctx) =>
-      mergeServerEntry(existing, ctx.dest, "mcpServers", {
-        command: MCP_COMMAND,
-        args: MCP_ARGS,
-      }),
+    ...serverWriter("mcpServers", {
+      command: MCP_COMMAND,
+      args: MCP_ARGS,
+    }),
   },
   {
     // Destination: ~/.cline/data/settings/cline_mcp_settings.json (USER-scoped)
@@ -278,12 +308,11 @@ export const WRITERS: Writer[] = [
     title: "Cline MCP server",
     scope: "user",
     path: (ctx) => join(ctx.home, ".cline", "data", "settings", "cline_mcp_settings.json"),
-    write: (existing, ctx) =>
-      mergeServerEntry(existing, ctx.dest, "mcpServers", {
-        command: MCP_COMMAND,
-        args: MCP_ARGS,
-        disabled: false,
-      }),
+    ...serverWriter("mcpServers", {
+      command: MCP_COMMAND,
+      args: MCP_ARGS,
+      disabled: false,
+    }),
   },
   {
     // Destination: ${XDG_CONFIG_HOME:-~/.config}/kilo/kilo.jsonc (USER-scoped)
@@ -302,12 +331,11 @@ export const WRITERS: Writer[] = [
     title: "Kilo Code MCP server",
     scope: "user",
     path: (ctx) => join(ctx.xdgConfigHome ?? join(ctx.home, ".config"), "kilo", "kilo.jsonc"),
-    write: (existing, ctx) =>
-      mergeServerEntry(existing, ctx.dest, "mcp", {
-        type: "local",
-        command: [MCP_COMMAND, ...MCP_ARGS],
-        enabled: true,
-      }),
+    ...serverWriter("mcp", {
+      type: "local",
+      command: [MCP_COMMAND, ...MCP_ARGS],
+      enabled: true,
+    }),
   },
   {
     // Destination: AGENTS.md (project-scoped)
@@ -329,5 +357,8 @@ export const WRITERS: Writer[] = [
       // write and cannot safely reorder.
       return `${existing.replace(/\n+$/, "")}\n\n${AGENTS_BLOCK}\n`;
     },
+    // The marked block and nothing else. An AGENTS.md is prose a team wrote, and the
+    // merge above returns all of it.
+    preview: () => `${AGENTS_BLOCK}\n`,
   },
 ];

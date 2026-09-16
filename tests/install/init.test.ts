@@ -351,8 +351,45 @@ describe("formatInitPlan", () => {
     );
     const rendered = formatInitPlan(await planClaudeMcp({ global: true }), true);
     expect(rendered).toContain(join(home, ".claude.json"));
-    expect(rendered).toContain("not shown");
     expect(rendered).not.toContain(secret);
+    expect(rendered).not.toContain("padding");
+    // What it prints instead is the entry, and the entry says so.
+    expect(rendered).toContain("subpixel's entry");
+    expect(rendered).toContain('"subpixel"');
+  });
+
+  it("previews only subpixel's entry, never a neighbour's credentials", async () => {
+    // The small-file case, which no size limit covers: a .mcp.json is a few lines
+    // long, and every one of them that is not ours can be somebody's API key.
+    const secret = "hunter2-deploy-token";
+    await writeFile(
+      join(cwd, ".mcp.json"),
+      JSON.stringify(
+        { mcpServers: { unrelated: { command: "other", env: { API_KEY: secret } } } },
+        null,
+        2,
+      ),
+    );
+    const rendered = formatInitPlan(await planClaudeMcp(), true);
+    expect(rendered).not.toContain(secret);
+    expect(rendered).not.toContain("unrelated");
+    expect(rendered).toContain('"subpixel"');
+  });
+
+  it("leaves the neighbour in the file it refused to print", async () => {
+    // The preview narrows what is SHOWN and must not narrow what is WRITTEN.
+    const secret = "hunter2-deploy-token";
+    await writeFile(
+      join(cwd, ".mcp.json"),
+      JSON.stringify(
+        { mcpServers: { unrelated: { command: "other", env: { API_KEY: secret } } } },
+        null,
+        2,
+      ),
+    );
+    const [target] = await planClaudeMcp();
+    expect(target!.content).toContain(secret);
+    expect(target!.content).toContain("subpixel");
   });
 
   it("tells the user how to clear a conflict", async () => {

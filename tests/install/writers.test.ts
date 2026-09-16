@@ -104,6 +104,29 @@ describe("the install writers", () => {
         const once = writer.write(undefined, ctx);
         expect(writer.write(once, ctx)).toBe(once);
       });
+
+      // The JSON-merging writers only. The rest own their whole file and replace it.
+      if (row.existing.startsWith("{")) {
+        it("hands over the entry when the file cannot be merged into", () => {
+          // JSONC. Several of these hosts document `//` comments in their own
+          // config, and this merge writes back through JSON.stringify — which
+          // would delete every one of them. The user has to do it by hand, so the
+          // error has to say what to type.
+          let thrown: unknown;
+          try {
+            writer.write('{\n  // my notes\n  "theme": "dark"\n}\n', ctx);
+          } catch (err) {
+            thrown = err;
+          }
+          const message = (thrown as Error).message;
+          expect(message).toContain("subpixel");
+          expect(message).toContain("npx");
+          expect(message).toContain("by hand");
+          // --force REPLACES the file. It may still be what someone wants, but it
+          // must not be the headline advice for a file with a comment in it.
+          expect(message.indexOf("by hand")).toBeLessThan(message.indexOf("--force"));
+        });
+      }
     });
   }
 });

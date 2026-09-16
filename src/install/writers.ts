@@ -122,9 +122,10 @@ function serverWriter(
   key: string,
   entry: Record<string, unknown>,
 ): Pick<Writer, "write" | "preview"> {
+  const snippet = () => `${JSON.stringify({ [key]: { subpixel: entry } }, null, 2)}\n`;
   return {
-    write: (existing, ctx) => mergeServerEntry(existing, ctx.dest, key, entry),
-    preview: () => `${JSON.stringify({ [key]: { subpixel: entry } }, null, 2)}\n`,
+    write: (existing, ctx) => mergeServerEntry(existing, ctx.dest, key, entry, snippet()),
+    preview: snippet,
   };
 }
 
@@ -139,20 +140,43 @@ function serverWriter(
 export const MCP_COMMAND = "npx";
 export const MCP_ARGS = ["-y", "subpixel", "mcp"];
 
-function parseJsonObject(existing: string | undefined, target: string): Record<string, unknown> {
+/**
+ * What to do about a file this writer cannot merge into.
+ *
+ * Every remaining option is worse than doing it by hand, so the error hands over
+ * the entry instead of naming a flag. The commonest cause by far is JSONC: several
+ * of these hosts document `//` comments in their own config, and this merge writes
+ * back through `JSON.stringify`, which would silently delete every one of them.
+ * `--force` REPLACES the file — on a `~/.claude.json` that is the user's session
+ * state as well as their servers, so suggesting it as the remedy for a comment is
+ * an unusually expensive piece of advice.
+ *
+ * Adding a JSONC parser is the wrong fix for the same reason: it gets us as far as
+ * reading the file, and then the write still has to reproduce every comment and
+ * trailing comma exactly where they were.
+ */
+function cannotMerge(target: string, reason: string, snippet: string): ConfigError {
+  return new ConfigError(
+    `${target} ${reason}, so subpixel cannot merge into it without rewriting the file. ` +
+      `Add this entry by hand, keeping whatever else is in there:\n\n${snippet}\n` +
+      `Or re-run with --force to REPLACE the file, which discards anything already in it.`,
+  );
+}
+
+function parseJsonObject(
+  existing: string | undefined,
+  target: string,
+  snippet: string,
+): Record<string, unknown> {
   if (existing === undefined || existing.trim() === "") return {};
   let parsed: unknown;
   try {
     parsed = JSON.parse(existing);
   } catch (err) {
-    throw new ConfigError(
-      `${target} is not valid JSON (${(err as Error).message}). Fix it, or re-run with --force to replace it.`,
-    );
+    throw cannotMerge(target, `is not valid JSON (${(err as Error).message})`, snippet);
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new ConfigError(
-      `${target} does not contain a JSON object. Fix it, or re-run with --force to replace it.`,
-    );
+    throw cannotMerge(target, "does not contain a JSON object", snippet);
   }
   return parsed as Record<string, unknown>;
 }
@@ -180,8 +204,9 @@ function mergeServerEntry(
   target: string,
   key: string,
   entry: Record<string, unknown>,
+  snippet: string,
 ): string {
-  const doc = parseJsonObject(existing, target);
+  const doc = parseJsonObject(existing, target, snippet);
   const servers = asObject(doc[key]);
   return `${JSON.stringify(
     { ...doc, [key]: { ...servers, subpixel: { ...asObject(servers.subpixel), ...entry } } },

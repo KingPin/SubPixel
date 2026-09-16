@@ -17,9 +17,21 @@ The path of the written file goes to stdout. Everything else goes to stderr.
 npm install -g subpixel        # or: npx subpixel <command>
 ```
 
-Node 24 or newer. Authentication comes from the Codex CLI: run `codex login` once, and
-subpixel reads the same `~/.codex/auth.json`. `sharp` is an optional peer dependency,
-needed only for `--exact-size`, `--transparent`, `--variants`, and `spx icons`.
+Examples you run by hand use `spx`, the globally installed binary. Without the
+global install, each one works as `npx subpixel <command>` instead — which is what
+the CI and MCP snippets below use, since neither can assume a global install.
+
+Node 24 or newer. Authentication comes from the
+[Codex CLI](https://github.com/openai/codex), which you need once for the login:
+
+```bash
+npm install -g @openai/codex
+codex login
+```
+
+subpixel reads the `~/.codex/auth.json` that login writes. `sharp` is an optional peer
+dependency, needed only for `--exact-size`, `--transparent`, `--variants`, and
+`spx icons`.
 
 ## 30-second quickstart
 
@@ -56,9 +68,8 @@ pick targets by id. It is parse-merge-write throughout — unrelated servers sur
 second run changes nothing, and `--dry-run` prints every file it would write without
 touching the disk.
 
-Claude Code gets the skill and not an MCP entry. It can run the CLI from the shell it
-already has, and a skill costs nothing until an image is actually wanted, while an MCP
-server's tool schemas sit in the model's context on every turn. Ask for the entry with
+Claude Code gets the skill and not an MCP entry, because it can already run the CLI
+from its own shell ([why](docs/reference/mcp.md#claude-code)). Ask for the entry with
 `spx init --only claude-mcp` if you want it anyway.
 
 The MCP server is `spx mcp`, a stdio server exposing seven tools: `generate_image`,
@@ -121,6 +132,11 @@ commit the result.
 | `spx models` | List the driver models subpixel will try, in order |
 
 `spx "a red fox"` is shorthand for `spx generate "a red fox"`.
+
+Project settings — the named styles `--style` and `spx styles` read, the default
+backend, the output directory — live in a `subpixel.config.json` found by walking up
+from the working directory, or under a `subpixel` key in `package.json`. The driver
+model is not one of them; it comes from Codex, and `--model` pins it per run.
 
 Full flags, exit codes, and the configuration file formats are in
 [docs/reference/cli.md](docs/reference/cli.md).

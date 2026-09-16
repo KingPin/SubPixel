@@ -43,7 +43,14 @@ export interface InitOptions {
   force?: boolean;
   /** The bundled skill text. Read from the package when absent. */
   skill?: string;
-  /** Writer ids to plan, in place of every writer. Absent or empty means all of them. */
+  /**
+   * Writer ids to plan, in place of the default set.
+   *
+   * Absent means the default set, which is every writer that is not `optIn`. An empty
+   * list is a caller who meant to name something and named nothing, so it throws
+   * rather than silently becoming the default set — the one wrong answer here is the
+   * one that writes MORE than was asked for.
+   */
   only?: string[];
   /**
    * Write each harness its user-scoped config, so every project gets subpixel.
@@ -66,8 +73,14 @@ export interface InitOptions {
  * the default set is narrower than the table.
  */
 function selectWriters(only: string[] | undefined): Writer[] {
-  if (only === undefined || only.length === 0) return WRITERS.filter((w) => w.optIn !== true);
+  if (only === undefined) return WRITERS.filter((w) => w.optIn !== true);
   const known = WRITERS.map((writer) => writer.id);
+  // Naming nothing is not the same as naming no preference. `--only ''` and `--only ,`
+  // both arrive here as `[]`, and treating that as the default set turns a malformed
+  // flag into a run that writes every target the user was trying to narrow away from.
+  if (only.length === 0) {
+    throw new ConfigError(`No init target was named. Known targets: ${known.join(", ")}.`);
+  }
   const unknown = only.filter((id) => !known.includes(id));
   if (unknown.length > 0) {
     throw new ConfigError(

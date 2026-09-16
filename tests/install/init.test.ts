@@ -86,6 +86,12 @@ describe("planInit", () => {
     await expect(planInit({ cwd, home, env, only: ["cursed"] })).rejects.toThrow(/cursed/);
   });
 
+  it("rejects an empty selection rather than widening it to the default set", async () => {
+    // `--only ''` and `--only ,` both arrive as []. Reading that as "no preference"
+    // makes a malformed flag write every default target — the opposite of narrowing.
+    await expect(planInit({ cwd, home, env, only: [] })).rejects.toThrow(/No init target/);
+  });
+
   it("sends a project target to its user-scoped file under --global", async () => {
     await mkdir(join(home, ".claude"), { recursive: true });
     await mkdir(join(home, ".cursor"), { recursive: true });

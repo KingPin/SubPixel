@@ -7,9 +7,17 @@ export interface InitCliOptions {
   only?: string;
 }
 
-/** `--only claude-mcp,cursor` — a comma list, because commander gives us one string. */
-function parseOnly(only: string | undefined): string[] {
-  return (only ?? "")
+/**
+ * `--only claude-mcp,cursor` — a comma list, because commander gives us one string.
+ *
+ * An absent flag and an empty one are different answers and must stay that way.
+ * `undefined` is "you did not choose", `[]` is "you chose nothing" — and `--only ''`
+ * or `--only ,` collapsing into the default set would widen the run to every target
+ * on the strength of a typo.
+ */
+function parseOnly(only: string | undefined): string[] | undefined {
+  if (only === undefined) return undefined;
+  return only
     .split(",")
     .map((id) => id.trim())
     .filter((id) => id !== "");

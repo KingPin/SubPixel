@@ -62,6 +62,29 @@ describe.runIf(hasSharp)("buildIconPack", () => {
     expect(ico!.data.readUInt16LE(2)).toBe(1);
   });
 
+  // 16 and 32 appear in both the pack and the ICO, and the ICO now reuses the
+  // buffers the pack already rendered instead of resizing the source again. Reusing
+  // the WRONG buffer is the way that goes wrong, so compare the bytes a browser
+  // would decode against the file of the same size.
+  it("packs the same bytes into the ICO that it wrote as PNGs", async () => {
+    const pack = await buildIconPack(PNG);
+    const ico = pack.find((entry) => entry.name === "favicon.ico")!.data;
+    const payload = (index: number): Buffer =>
+      ico.subarray(
+        ico.readUInt32LE(6 + 16 * index + 12),
+        ico.readUInt32LE(6 + 16 * index + 12) + ico.readUInt32LE(6 + 16 * index + 8),
+      );
+
+    for (const [index, name] of [
+      [0, "favicon-16x16.png"],
+      [1, "favicon-32x32.png"],
+    ] as const) {
+      expect(payload(index), name).toEqual(pack.find((entry) => entry.name === name)!.data);
+    }
+    // 48 is in no pack file, so it still gets its own resize.
+    expect(await probeDimensions(payload(2))).toEqual({ width: 48, height: 48 });
+  });
+
   it("reports a non-square source", async () => {
     const warnings: string[] = [];
     const { resizeTo } = await import("../../src/engine/sharpx.js");

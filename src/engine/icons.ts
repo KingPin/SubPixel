@@ -85,16 +85,22 @@ export async function buildIconPack(
   // format, so `spx icons logo.jpg` would write JPEG bytes into `favicon-32x32.png`
   // and into an ICO that says they are PNG. Both files would be silently broken.
   const files: IconFile[] = [];
+  // Keyed by size because the ICO wants two of these back. 16 and 32 are in both
+  // lists, and a resize is a decode plus a re-encode of the whole source — on a
+  // 2048px master that was two of them spent reproducing bytes already in hand.
+  const rendered = new Map<number, Buffer>();
   for (const spec of ICON_PACK) {
-    files.push({
-      name: spec.name,
-      data: await resizeTo(source, spec.size, spec.size, "cover", "png"),
-    });
+    const data = await resizeTo(source, spec.size, spec.size, "cover", "png");
+    rendered.set(spec.size, data);
+    files.push({ name: spec.name, data });
   }
 
   const packed = [];
   for (const size of ICO_SIZES) {
-    packed.push({ size, png: await resizeTo(source, size, size, "cover", "png") });
+    packed.push({
+      size,
+      png: rendered.get(size) ?? (await resizeTo(source, size, size, "cover", "png")),
+    });
   }
   files.push({ name: "favicon.ico", data: buildIco(packed) });
 

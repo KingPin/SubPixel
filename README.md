@@ -67,9 +67,8 @@ pick targets by id. It is parse-merge-write throughout — unrelated servers sur
 second run changes nothing, and `--dry-run` prints every file it would write without
 touching the disk.
 
-Claude Code gets the skill and not an MCP entry. It can run the CLI from the shell it
-already has, and a skill costs nothing until an image is actually wanted, while an MCP
-server's tool schemas sit in the model's context on every turn. Ask for the entry with
+Claude Code gets the skill and not an MCP entry, because it can already run the CLI
+from its own shell ([why](docs/reference/mcp.md#claude-code)). Ask for the entry with
 `spx init --only claude-mcp` if you want it anyway.
 
 The MCP server is `spx mcp`, a stdio server exposing seven tools: `generate_image`,

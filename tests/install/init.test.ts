@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -184,6 +184,26 @@ describe("applyInit", () => {
     };
     expect(doc.numStartups).toBe(7);
     expect(Object.keys(doc.mcpServers).sort()).toEqual(["other", "subpixel"]);
+  });
+
+  it("leaves the mode of a file it merges into alone", async () => {
+    // atomicWrite renames a new inode over the target, so the mode is ours to carry
+    // over. Handing a 0600 ~/.claude.json back at 0644 opens one user's session state
+    // to every other account on the machine, silently.
+    await mkdir(join(home, ".claude"), { recursive: true });
+    const path = join(home, ".claude.json");
+    await writeFile(path, JSON.stringify({ numStartups: 7 }));
+    await chmod(path, 0o600);
+
+    await applyInit(await planClaudeMcp({ global: true }));
+
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+  });
+
+  it("creates a user-scoped config private rather than umask-wide", async () => {
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await applyInit(await planClaudeMcp({ global: true }));
+    expect((await stat(join(home, ".claude.json"))).mode & 0o777).toBe(0o600);
   });
 
   it("names the file it actually failed to parse", async () => {

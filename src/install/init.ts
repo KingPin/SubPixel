@@ -178,13 +178,34 @@ export async function planInit(options: InitOptions = {}): Promise<TargetPlan[]>
   return Promise.all(selectWriters(options.only).map((writer) => planTarget(writer, ctx, flags)));
 }
 
+/**
+ * The mode to write a target with.
+ *
+ * `atomicWrite` renames a fresh file over the target, so the new inode carries the
+ * mode we hand it and not the one the old file had. Left to the default, updating a
+ * `0600` `~/.claude.json` would hand it back at `0644` — readable by every other
+ * account on the machine — and nothing in the output would say so. So an existing
+ * file keeps its own mode, whatever the user set it to.
+ *
+ * A file we create under `$HOME` gets `0600` rather than the default, because a
+ * user-scoped config is one user's business and the umask that would otherwise decide
+ * this is not something the user chose per file. Project-scoped files keep the default:
+ * they are checked in and shared with the team, which is the whole point of them.
+ */
+async function writeMode(target: TargetPlan): Promise<number | undefined> {
+  const existing = await stat(target.path).catch(() => undefined);
+  if (existing !== undefined) return existing.mode & 0o777;
+  return target.scope === "user" ? 0o600 : undefined;
+}
+
 /** Write the targets that need writing. Returns the ones that were written. */
 export async function applyInit(plan: TargetPlan[]): Promise<TargetPlan[]> {
   const pending = plan.filter(
     (target) => target.state === "created" || target.state === "updated",
   );
   for (const target of pending) {
-    await atomicWrite(target.path, target.content!);
+    const mode = await writeMode(target);
+    await atomicWrite(target.path, target.content!, mode !== undefined ? { mode } : {});
   }
   return pending;
 }

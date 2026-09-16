@@ -28,7 +28,7 @@ npm install -g @openai/codex
 codex login
 ```
 
-subpixel reads the `~/.codex/auth.json` that writes. `sharp` is an optional peer
+subpixel reads the `~/.codex/auth.json` that login writes. `sharp` is an optional peer
 dependency, needed only for `--exact-size`, `--transparent`, `--variants`, and
 `spx icons`.
 

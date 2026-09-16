@@ -3,6 +3,20 @@ import type { GenerationEvent } from "./types.js";
 export type EventSink = (event: GenerationEvent) => void;
 
 /**
+ * One human-readable line for an engine event.
+ *
+ * Lives here, beside the sink type, because both consumers render the same thing:
+ * the MCP reporter puts it in a progress notification and the CLI puts it on
+ * stderr. Two copies is how the two surfaces end up disagreeing about what stage
+ * a run is in.
+ */
+export function describeEvent(event: GenerationEvent): string {
+  const subject = event.assetId ?? (event.index === undefined ? undefined : `image ${event.index + 1}`);
+  const head = subject ? `${subject}: ${event.stage}` : event.stage;
+  return event.message ? `${head} — ${event.message}` : head;
+}
+
+/**
  * Wrap a caller's event callback so it cannot fail a generation.
  *
  * The callback belongs to whoever asked for progress — an MCP adapter, a progress

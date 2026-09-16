@@ -1,6 +1,7 @@
 import { join, resolve } from "node:path";
 import { loadConfig } from "../config/load.js";
 import { ConfigError } from "../core/errors.js";
+import { describeEvent, type EventSink } from "../core/events.js";
 import { createLogger, type LogLevel } from "../core/logger.js";
 import { redact } from "../core/redact.js";
 import type {
@@ -201,6 +202,45 @@ export function resolveGenerateDeps(
  * is built; everything after that is identical, and a second copy of it is a second
  * place for `--dry-run` or the budget check to go missing.
  */
+/**
+ * Progress on stderr while the run is in flight.
+ *
+ * stderr, never stdout: stdout carries the artifact path or a single JSON
+ * document, and a caller piping it into a build step must not receive status
+ * lines interleaved with it.
+ *
+ * On a terminal the line rewrites itself in place and is erased before the result
+ * is printed, so the transcript ends with the artifact and nothing else. Anywhere
+ * else — a CI log, a pipe — each event is its own line, because \r in a log file
+ * produces one unreadable run-on line.
+ *
+ * Elapsed time is the point of the whole thing. A generation takes tens of
+ * seconds with no output of any kind, which is indistinguishable from a hang.
+ */
+function progressWriter(): { onEvent: EventSink; clear: () => void } {
+  const started = Date.now();
+  const tty = process.stderr.isTTY === true;
+  let dirty = false;
+  return {
+    onEvent: (event) => {
+      const elapsed = ((Date.now() - started) / 1000).toFixed(1);
+      const line = `${describeEvent(event)} (${elapsed}s)`;
+      if (!tty) {
+        process.stderr.write(`${line}\n`);
+        return;
+      }
+      // Erase the whole line first: a shorter message must not leave the tail of a
+      // longer one behind it.
+      process.stderr.write(`\u001b[2K\r${line}`);
+      dirty = true;
+    },
+    clear: () => {
+      if (dirty) process.stderr.write("\u001b[2K\r");
+      dirty = false;
+    },
+  };
+}
+
 export async function runGenerateRequest(
   request: GenerateRequest,
   options: GenerateCliOptions & { config: SubpixelConfig },
@@ -259,13 +299,28 @@ export async function runGenerateRequest(
     return;
   }
 
-  const result = await generate(request, {
-    ...deps,
-    logger: createLogger({ level: logLevelFor(options) }),
-    // Format mismatches and sibling redirects survive --quiet, per the spec's
-    // "never lie about bytes" rule. They bypass the level-filtered logger.
-    warnAlways: (message) => process.stderr.write(`warning: ${message}\n`),
-  });
+  // --quiet silences progress. Unlike the format and redirect warnings below, a
+  // stage line states nothing about the bytes that were written, so there is
+  // nothing here the spec's "never lie about bytes" rule protects.
+  const progress = options.quiet ? undefined : progressWriter();
+  let result;
+  try {
+    result = await generate(request, {
+      ...deps,
+      logger: createLogger({ level: logLevelFor(options) }),
+      // Format mismatches and sibling redirects survive --quiet, per the spec's
+      // "never lie about bytes" rule. They bypass the level-filtered logger.
+      warnAlways: (message) => {
+        progress?.clear();
+        process.stderr.write(`warning: ${message}\n`);
+      },
+      onEvent: progress?.onEvent,
+    });
+  } finally {
+    // In a finally, so a failed run does not leave a half-written status line as
+    // the last thing on the terminal before the error.
+    progress?.clear();
+  }
 
   // Paths first, unconditionally. They are the artifact, and the spec says stdout
   // carries the artifact path and nothing else. A caller piping stdout into a

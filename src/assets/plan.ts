@@ -2,7 +2,7 @@ import { access } from "node:fs/promises";
 import { basename } from "node:path";
 import { cacheKey } from "../engine/cache.js";
 import { readManifest, type ManifestEntry } from "../engine/manifest.js";
-import { loadReferences } from "../engine/references.js";
+import { referenceDigest } from "../engine/references.js";
 import { variantPath } from "../engine/variants.js";
 import { redact } from "../core/redact.js";
 import type { ResolvedAsset } from "./load.js";
@@ -43,8 +43,13 @@ export const diskProbe: AssetProbe = {
     }
   },
   readManifest,
-  referenceHashes: async (paths) =>
-    (await loadReferences(paths)).map((reference) => reference.sha256),
+  // Sequential, like `loadReferences`: short lists, and a deterministic first
+  // failure is what an error message needs.
+  referenceHashes: async (paths) => {
+    const hashes: string[] = [];
+    for (const path of paths ?? []) hashes.push(await referenceDigest(path));
+    return hashes;
+  },
 };
 
 async function statusFor(asset: ResolvedAsset, probe: AssetProbe): Promise<AssetStatus> {

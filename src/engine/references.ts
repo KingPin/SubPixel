@@ -109,6 +109,19 @@ export async function loadReference(
   };
 }
 
+/**
+ * The digest of a reference's CONTENTS, and nothing else.
+ *
+ * `loadReference` builds a base64 data URL for the request body — a second copy of
+ * the file, a third longer than the first. Every caller that only wants the hash
+ * for a cache key was paying for that copy and throwing it away; `spx sync --check`
+ * did it once per reference per asset, on every run, having sent nothing anywhere.
+ */
+export async function referenceDigest(path: string): Promise<string> {
+  const { data } = await readImageFile(path);
+  return createHash("sha256").update(data).digest("hex");
+}
+
 export async function loadReferences(paths: string[] | undefined): Promise<LoadedReference[]> {
   if (!paths || paths.length === 0) return [];
 

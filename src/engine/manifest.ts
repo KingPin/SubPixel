@@ -76,6 +76,34 @@ export function manifestPathFor(imagePath: string): string {
 }
 
 /**
+ * Is the sidecar slot beside this image ours to write?
+ *
+ * True when nothing is there, and when what is there is a manifest we wrote. False
+ * for an unrelated `hero.png.json` that a user, a build step, or another tool put
+ * beside the image.
+ *
+ * It matters because `writeManifest` replaces its target unconditionally, and it runs
+ * AFTER the image has landed. Without this the no-clobber rule covers half a
+ * destination: `hero.png` being free is enough to take `hero.png`, and the run then
+ * destroys the neighbouring JSON that nobody passed `--overwrite` for. The sidecar is
+ * part of the destination, so it is checked while the destination is still being
+ * chosen.
+ */
+export async function sidecarIsOursToWrite(imagePath: string): Promise<boolean> {
+  let raw: string;
+  try {
+    raw = await readFile(manifestPathFor(imagePath), "utf8");
+  } catch {
+    return true;
+  }
+  try {
+    return isManifestEntry(JSON.parse(raw));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * A reference path as it must live on disk: relative to the sidecar's directory.
  *
  * A path "as typed" is relative to whatever directory `spx generate` ran in, and

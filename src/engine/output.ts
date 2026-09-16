@@ -4,6 +4,7 @@ import { basename, extname, join } from "node:path";
 import { ConfigError, OutputError } from "../core/errors.js";
 import { atomicPublish } from "../core/fsx.js";
 import { redact } from "../core/redact.js";
+import { manifestPathFor, sidecarIsOursToWrite } from "./manifest.js";
 import type { ImageArtifact, ImageFormat } from "../core/types.js";
 
 export function sha256(data: Uint8Array): string {
@@ -200,14 +201,30 @@ export async function writeImage(
 
   const maxSiblings = options.maxSiblings ?? DEFAULT_MAX_SIBLINGS;
   let target = intended;
+  // Why the redirect happened, so the warning can say which file was in the way. The
+  // image and its sidecar are one destination and either can be the occupied half.
+  let blocked: "image" | "sidecar" = "image";
   for (let attempt = 1; ; attempt += 1) {
+    // A destination is only free when BOTH halves of it are. `writeManifest` replaces
+    // `<target>.json` unconditionally once the image lands, so taking a free image
+    // name whose sidecar slot holds a stranger's file destroys that file — with no
+    // overwrite flag anywhere in the run. Checked here, while the destination is
+    // still being chosen, rather than after the image is already on disk.
+    const sidecarFree = options.overwrite === true || (await sidecarIsOursToWrite(target));
     // atomicPublish resolves false when the target already exists and overwrite is
     // off. It uses link()/EEXIST rather than rename(), so two concurrent writers
     // cannot both believe they won.
-    const published = await atomicPublish(target, data, { overwrite: options.overwrite === true });
+    const published = sidecarFree
+      ? await atomicPublish(target, data, { overwrite: options.overwrite === true })
+      : false;
     if (published) {
       if (target !== intended) {
-        warn(`${basename(intended)} exists. Wrote ${basename(target)} instead.`);
+        warn(
+          blocked === "sidecar"
+            ? `${basename(manifestPathFor(intended))} exists and is not a subpixel manifest. ` +
+                `Wrote ${basename(target)} instead.`
+            : `${basename(intended)} exists. Wrote ${basename(target)} instead.`,
+        );
       }
       return {
         path: target,
@@ -225,7 +242,10 @@ export async function writeImage(
     // file protects nothing and breaks idempotency. The no-clobber rule exists to
     // stop DIFFERENT content replacing the user's file; identical content is not
     // a collision.
-    if (await sameBytes(target, data)) {
+    //
+    // Gated on the sidecar too: returning early here is a promise that the manifest
+    // about to be written lands somewhere it is allowed to.
+    if (sidecarFree && (await sameBytes(target, data))) {
       return {
         path: target,
         bytes: data.length,
@@ -243,6 +263,7 @@ export async function writeImage(
           "Pass --overwrite, or choose a different --output.",
       );
     }
+    blocked = sidecarFree ? "image" : "sidecar";
     target = siblingPath(intended, attempt + 1);
   }
 }

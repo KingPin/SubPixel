@@ -268,7 +268,8 @@ function isVariantRecordArray(value: unknown): boolean {
         isWidth(v.width) &&
         isWidth(v.height) &&
         isString(v.path) &&
-        isNumber(v.bytes),
+        isNumber(v.bytes) &&
+        optional(v.sha256, isString),
     )
   );
 }

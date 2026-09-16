@@ -307,6 +307,7 @@ async function publishVariants(
       height: variant.height,
       path: result.path,
       bytes: result.bytes,
+      sha256: result.sha256,
     });
   }
 

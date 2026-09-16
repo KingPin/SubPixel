@@ -135,6 +135,15 @@ export interface VariantRecord {
   height: number;
   path: string;
   bytes: number;
+  /**
+   * The digest of the variant as written.
+   *
+   * Optional because a sidecar from an earlier version does not have it. Without a
+   * digest per variant, `spx sync --check --verify` reads the primary back and takes
+   * the variants on trust, so a truncated or re-encoded `hero-800w.webp` reports
+   * "current" forever: nothing about it feeds the cache key.
+   */
+  sha256?: string;
 }
 
 export interface ImageArtifact {

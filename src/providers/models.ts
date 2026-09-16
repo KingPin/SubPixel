@@ -34,11 +34,18 @@ export interface ModelCache {
  * The last-resort list, used when no cache exists and the network is unavailable.
  * These slugs are only starting points — a wrong guess produces a ModelRejected
  * that the caller recovers from by advancing to the next candidate.
+ *
+ * Slugs and priorities are the `visibility: "list"` half of the catalogue captured
+ * from `GET /backend-api/codex/models` on 2026-09-15; see
+ * `docs/reference/captures/2026-09-15-codex-models-endpoint.md`. Re-run that capture
+ * to refresh them.
  */
 export const BUNDLED_MODELS: ModelDescriptor[] = [
-  { slug: "gpt-5.6-sol", visibility: "list", priority: 10, supported_reasoning_levels: [{ effort: "low" }] },
-  { slug: "gpt-5.6-terra", visibility: "list", priority: 20, supported_reasoning_levels: [{ effort: "low" }] },
-  { slug: "gpt-5.5", visibility: "list", priority: 40, supported_reasoning_levels: [{ effort: "low" }] },
+  { slug: "gpt-6-astra", visibility: "list", priority: 1, supported_reasoning_levels: [{ effort: "low" }] },
+  { slug: "gpt-5.6-sol", visibility: "list", priority: 4, supported_reasoning_levels: [{ effort: "low" }] },
+  { slug: "gpt-5.6-terra", visibility: "list", priority: 7, supported_reasoning_levels: [{ effort: "low" }] },
+  { slug: "gpt-5.6-luna", visibility: "list", priority: 8, supported_reasoning_levels: [{ effort: "low" }] },
+  { slug: "gpt-5.5", visibility: "list", priority: 12, supported_reasoning_levels: [{ effort: "low" }] },
 ];
 
 export function modelCachePath(
@@ -160,18 +167,20 @@ export function isCacheStale(fetchedAt: string | undefined, maxAgeMs: number): b
  * Pick a driver model. This never prompts. Interactive selection belongs to
  * `spx init` alone.
  *
- * **Two layers, not three.** The design spec describes a middle layer that refreshes
- * a stale cache with `GET /models` and an `If-None-Match` header. That endpoint's URL
- * and response schema are open item 1 in the spec: they need one live capture, which
- * has not happened. Implementing a guess would be worse than not implementing it —
- * a wrong URL turns every stale cache into an extra failed round-trip before falling
- * back to the bundled list anyway.
+ * **Two layers, not three — deliberately, and permanently.** The design spec once
+ * described a middle layer that refreshes a stale cache with `GET /models` and an
+ * `If-None-Match` header. The endpoint was captured on 2026-09-15
+ * (`docs/reference/captures/2026-09-15-codex-models-endpoint.md`) and the layer was
+ * withdrawn: `codex` never sends `If-None-Match` even though it stores the `etag`, and
+ * the server answers a matching one with `200` and the whole 360 KB catalogue. There is
+ * no cheap refresh to implement. A full one would buy nothing either — `subpixel` drives
+ * `codex` for every generation, and `codex` refreshes `models_cache.json` on its own
+ * staleness check, so the cache is warm for the same reason the tool works at all.
  *
- * So M0-M3 ship the on-disk cache and the bundled list, and staleness is *reported*
- * rather than acted on: `resolveModel` marks the result stale, `spx doctor` tells the
- * user to run any `codex` command to let the CLI refresh its own cache, and
- * `spx models` shows the cache age. Wiring the refresh is a follow-on task gated on
- * that capture. Do not silently present this as implemented.
+ * Staleness is therefore *reported*, not acted on: `resolveModel` marks the result
+ * stale, `spx doctor` tells the user to run any `codex` command to let the CLI refresh
+ * its own cache, and `spx models` shows the cache age. Do not re-add the refresh without
+ * re-running the capture first.
  */
 export async function resolveModel(options: ResolveModelOptions = {}): Promise<ResolvedModel> {
   if (options.override) {

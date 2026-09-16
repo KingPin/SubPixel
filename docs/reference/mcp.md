@@ -4,8 +4,9 @@
 should not need to run it by hand except to debug. It takes no flags — everything it
 needs comes from the project config in the directory it is launched from.
 
-`spx init` writes the config for every harness installed on this machine. The rest of
-this page is what that config contains and what the server does once it is running.
+`spx init` writes the config for every harness installed on this machine, except the
+Claude Code entry — see below. The rest of this page is what that config contains and
+what the server does once it is running.
 
 ## Setup
 
@@ -21,6 +22,12 @@ shims. `-y` because a stdio transport has no terminal on which to answer an inst
 prompt.
 
 ### Claude Code
+
+**`spx init` does not write this one.** Claude Code gets the skill instead: it drives
+the same CLI through the shell it already has, its Bash timeout is long enough for a
+six minute codex-exec run, and a skill costs nothing until an image is wanted, while
+these seven tool schemas sit in the model's context on every turn. Ask for the entry
+with `spx init --only claude-mcp`, or write it by hand.
 
 `.mcp.json` in the project root, committed with the repository. An entry with no
 `type` is read as stdio.

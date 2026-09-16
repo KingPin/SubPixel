@@ -73,6 +73,15 @@ export interface Writer {
    */
   globalTarget?(ctx: InitContext): { path: string; marker: string };
   /**
+   * Keep this target out of a default run. `--only` is the only way to ask for it.
+   *
+   * For a target that buys its harness nothing it cannot already do. An MCP server
+   * costs its tool schemas in the model's context on every single turn, so a harness
+   * that can read the skill and run the CLI from its own shell is better off without
+   * one — and a config written by default is a cost the user never chose to pay.
+   */
+  optIn?: boolean;
+  /**
    * Merge our entry into `existing` and return the whole file.
    *
    * `existing` is `undefined` when the file is absent — and also when the caller
@@ -197,9 +206,14 @@ export const WRITERS: Writer[] = [
     // Launch:      npx -y subpixel mcp
     // No `type`: Claude Code documents an entry without one as stdio, and its own
     // examples omit it.
+    // Opt-in: Claude Code gets the skill, which loads only when an image is actually
+    // wanted and drives the same CLI through the shell it already has. Its Bash
+    // timeout is long enough for a 6 minute codex-exec run, so the dual-path
+    // streaming contract the server exists for buys it nothing either.
     id: "claude-mcp",
     title: "Claude Code MCP server",
     scope: "project",
+    optIn: true,
     path: (ctx) => join(ctx.cwd, ".mcp.json"),
     // ~/.claude.json is where `claude mcp add --scope user` puts a server, under the
     // same `mcpServers` key. It also holds Claude Code's own session state, which the

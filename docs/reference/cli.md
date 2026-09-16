@@ -167,7 +167,7 @@ spx init --global     # configure every harness on this machine, for every proje
 | Target id | Destination | Scope |
 | --- | --- | --- |
 | `claude-skill` | `.claude/skills/subpixel/SKILL.md` | project |
-| `claude-mcp` | `.mcp.json` | project |
+| `claude-mcp` | `.mcp.json` | project, opt-in |
 | `cursor` | `.cursor/mcp.json` | project |
 | `windsurf` | `~/.codeium/windsurf/mcp_config.json` | user |
 | `cline` | `~/.cline/data/settings/cline_mcp_settings.json` | user |
@@ -191,6 +191,11 @@ where they are. Under `--global`, Claude Code is detected like every other harne
 without a `~/.claude` directory it is reported as "not installed" and nothing is
 written. Combine the two flags to configure one harness everywhere —
 `spx init --global --only cursor`.
+
+`claude-mcp` is opt-in: a plain run does not write it, and `--only claude-mcp` is how
+you ask. Claude Code reads the skill and runs the CLI from its own shell, so the server
+buys it nothing while its tool schemas cost the model context on every turn. Every run
+says so at the foot of the report.
 
 A harness whose config directory does not exist is skipped and reported as "not
 installed". The three project-scoped files with no directory to detect — the skill,

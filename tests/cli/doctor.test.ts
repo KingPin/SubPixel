@@ -169,10 +169,12 @@ describe("the install section", () => {
     const fresh = await mkdtemp(join(tmpdir(), "subpixel-doctor-init-"));
     const result = await report(fresh);
     expect(result.install.ok).toBe(false);
-    expect(result.install.pending).toContain("claude-mcp");
+    expect(result.install.pending).toContain("claude-skill");
     // An absent harness is not pending. Nagging about Windsurf on a machine without
     // Windsurf is how a FAIL line stops being read.
     expect(result.install.pending).not.toContain("windsurf");
+    // Nor is an opt-in target. `doctor` reports what a plain `spx init` would do.
+    expect(result.install.pending).not.toContain("claude-mcp");
     expect(formatDoctorReport(result)).toContain("run `spx init` for");
   });
 
@@ -182,7 +184,7 @@ describe("the install section", () => {
     const result = await report(tree);
     expect(result.install.ok).toBe(true);
     expect(result.install.pending).toEqual([]);
-    expect(result.install.configured).toContain("claude-mcp");
+    expect(result.install.configured).toContain("claude-skill");
   });
 
   it("does not let a missing harness config fail the whole report", async () => {

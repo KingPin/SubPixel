@@ -61,9 +61,12 @@ export interface InitOptions {
  * An unknown id throws rather than being ignored, because the alternative is a run
  * that reports "nothing to do" for a typo and leaves the user believing the harness
  * they asked for is configured.
+ *
+ * Naming an opt-in writer is how it gets planned at all. Every id is nameable; only
+ * the default set is narrower than the table.
  */
 function selectWriters(only: string[] | undefined): Writer[] {
-  if (only === undefined || only.length === 0) return WRITERS;
+  if (only === undefined || only.length === 0) return WRITERS.filter((w) => w.optIn !== true);
   const known = WRITERS.map((writer) => writer.id);
   const unknown = only.filter((id) => !known.includes(id));
   if (unknown.length > 0) {
@@ -206,6 +209,14 @@ export function formatInitPlan(plan: TargetPlan[], dryRun: boolean): string {
   const conflicts = plan.filter((target) => target.state === "conflict");
   if (conflicts.length > 0) {
     lines.push("", "Nothing was written to the files above. Re-run with --force to replace them.");
+  }
+
+  // An opt-in target is absent from the report entirely, so the report has to say it
+  // exists. A default nobody can discover is a default nobody can change.
+  const planned = new Set(plan.map((target) => target.id));
+  for (const writer of WRITERS) {
+    if (writer.optIn !== true || planned.has(writer.id)) continue;
+    lines.push("", `Not written by default: ${writer.title}. Add it with --only ${writer.id}.`);
   }
 
   if (dryRun) {

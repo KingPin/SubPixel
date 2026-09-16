@@ -17,9 +17,17 @@ The path of the written file goes to stdout. Everything else goes to stderr.
 npm install -g subpixel        # or: npx subpixel <command>
 ```
 
-Node 24 or newer. Authentication comes from the Codex CLI: run `codex login` once, and
-subpixel reads the same `~/.codex/auth.json`. `sharp` is an optional peer dependency,
-needed only for `--exact-size`, `--transparent`, `--variants`, and `spx icons`.
+Node 24 or newer. Authentication comes from the
+[Codex CLI](https://github.com/openai/codex), which you need once for the login:
+
+```bash
+npm install -g @openai/codex
+codex login
+```
+
+subpixel reads the `~/.codex/auth.json` that writes. `sharp` is an optional peer
+dependency, needed only for `--exact-size`, `--transparent`, `--variants`, and
+`spx icons`.
 
 ## 30-second quickstart
 

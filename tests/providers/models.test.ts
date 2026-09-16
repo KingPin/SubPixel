@@ -30,19 +30,23 @@ function model(partial: Partial<ModelDescriptor> & { slug: string }): ModelDescr
   };
 }
 
-/** Mirrors the real ~/.codex/models_cache.json observed on 2026-09-12. */
+/**
+ * Mirrors the real ~/.codex/models_cache.json observed on 2026-09-12. The two
+ * `visibility: "hide"` entries are stand-ins: only their visibility and priority
+ * matter here, and the real slugs are not ours to publish.
+ */
 const LIVE_CACHE = {
   fetched_at: new Date().toISOString(),
   etag: "W/\"abc\"",
   client_version: "0.154.0",
   models: [
     model({ slug: "gpt-6-astra", priority: 1 }),
-    model({ slug: "gpt-reserve", priority: 3, visibility: "hide" }),
+    model({ slug: "hidden-a", priority: 3, visibility: "hide" }),
     model({ slug: "gpt-5.6-sol", priority: 10 }),
     model({ slug: "gpt-5.6-terra", priority: 20 }),
     model({ slug: "gpt-5.6-luna", priority: 30 }),
     model({ slug: "gpt-5.5", priority: 40 }),
-    model({ slug: "codex-auto-review", priority: 43, visibility: "hide" }),
+    model({ slug: "hidden-b", priority: 43, visibility: "hide" }),
   ],
 };
 

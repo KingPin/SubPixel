@@ -3,19 +3,18 @@
 **Captured:** 2026-09-15, 19:32–19:38 UTC
 **codex binary:** `codex-cli 0.154.0` (standalone, `x86_64-unknown-linux-musl`)
 **Probe:** `codex debug models` run against an isolated `CODEX_HOME` holding only a
-copy of `auth.json`, with `HTTPS_PROXY` pointed at a local `mitmdump` and
-`SSL_CERT_FILE` set to a bundle of the system roots plus the mitmproxy CA.
-**Addons:** one logged the request line and headers with every credential-shaped
-header replaced by its length; a second injected `If-None-Match` into the
-outgoing request so the server's conditional-request behaviour could be observed
-without forging a request by hand.
+copy of `auth.json`, with the transport observed through a local intercepting proxy
+so the request line, the headers and the server's conditional-request behaviour
+could be recorded. Every credential-shaped header was replaced by its length on the
+way to disk, and a second observation injected `If-None-Match` into the outgoing
+request rather than forging one by hand.
 
 This closes open item 1 of the design spec. `src/providers/models.ts` was written
 against an inferred endpoint; this is what the endpoint actually is.
 
-No token, refresh token, id token or account id appears here. The proxy addon
-redacted `authorization`, `chatgpt-account-id`, `cookie` and `set-cookie` before
-anything was written to disk.
+No token, refresh token, id token or account id appears here. `authorization`,
+`chatgpt-account-id`, `cookie` and `set-cookie` were redacted before anything was
+written to disk.
 
 ## Request
 
@@ -99,17 +98,19 @@ The full union of keys seen across the seven descriptors:
 `truncation_policy`, `upgrade`, `use_responses_lite`, `visibility`,
 `web_search_tool_type`.
 
-The catalogue as returned:
+The catalogue as returned. Five of the seven descriptors are `visibility: "list"`
+and are reproduced below; the other two are `visibility: "hide"` and are not named
+here, because nothing in `subpixel` may reach for them — `BUNDLED_MODELS` is the
+`list` half and only the `list` half. Their priorities, 3 and 43, are given only so
+the gaps in the sequence are not read as an omission.
 
 | slug | visibility | priority | reasoning levels |
 | --- | --- | --- | --- |
 | `gpt-6-astra` | list | 1 | low, medium, high, xhigh, max, ultra |
-| `gpt-reserve` | hide | 3 | low, medium, high, xhigh, max |
 | `gpt-5.6-sol` | list | 4 | low, medium, high, xhigh, max, ultra |
 | `gpt-5.6-terra` | list | 7 | low, medium, high, xhigh, max, ultra |
 | `gpt-5.6-luna` | list | 8 | low, medium, high, xhigh, max |
 | `gpt-5.5` | list | 12 | low, medium, high, xhigh |
-| `codex-auto-review` | hide | 43 | low, medium, high, xhigh, max |
 
 ## Answers to the three questions the issue asked
 
@@ -126,10 +127,10 @@ Not observed: a model being retired. That takes two catalogues far enough apart
 to contain a change, and this is one snapshot. Both candidate signals therefore
 remain inferences, and neither should be relied on as a contract:
 
-- **`visibility: "hide"`.** Seen on `gpt-reserve` and `codex-auto-review`. Both
-  read as internal or special-purpose rather than withdrawn — `codex-auto-review`
-  is a job the CLI runs for itself. So `hide` is better evidenced as "not offered
-  in the picker" than as "on the way out".
+- **`visibility: "hide"`.** Seen on the two unnamed descriptors above. Both read as
+  internal or special-purpose rather than withdrawn — one is plainly a job the CLI
+  runs for itself. So `hide` is better evidenced as "not offered in the picker" than
+  as "on the way out".
 - **Omission.** Plausible, unobserved.
 
 Nothing in `subpixel` needs this resolved. The resolver never asks whether a
@@ -179,30 +180,22 @@ nothing it does not already have:
 `spx doctor` already tells the user to run any `codex` command when the cache is
 stale. That advice is correct and remains the answer.
 
-## Reproducing
+## Refreshing the catalogue
 
-The isolated home holds a copy of your live `auth.json`, and the CA bundle lets
-anything using it have its TLS decrypted. Neither may outlive the run, so the
-scratch directory is created by `mktemp` outside the working tree and removed by
-a `trap` that fires on a clean exit, a `Ctrl-C` and a kill alike.
+To re-derive the slugs and priorities that `BUNDLED_MODELS` pins — which is the only
+part of this capture anyone maintaining `subpixel` needs — run `codex debug models`
+and read the `visibility: "list"` descriptors out of the result. It is an ordinary
+`codex` subcommand and needs no special setup.
 
-```sh
-# 1. mitmdump with a redacting addon on 127.0.0.1:8792
-# 2. a scratch dir that cleans itself up, whatever happens
-work=$(mktemp -d)
-trap 'shred -u "$work/codexhome/auth.json" 2>/dev/null; rm -rf "$work"' EXIT INT TERM HUP
-# 3. a CA bundle the Rust client will accept
-cat /etc/ssl/certs/ca-certificates.crt ~/.mitmproxy/mitmproxy-ca-cert.pem > "$work/ca-bundle.pem"
-# 4. an isolated CODEX_HOME holding only a copy of auth.json, so the fetch is forced
-mkdir -m 700 "$work/codexhome"
-install -m 600 ~/.codex/auth.json "$work/codexhome/auth.json"
-env CODEX_HOME="$work/codexhome" HTTPS_PROXY=http://127.0.0.1:8792 \
-    SSL_CERT_FILE="$work/ca-bundle.pem" codex debug models > catalogue.json
-```
+Two notes if the command appears to do nothing. A run answers from
+`models_cache.json` when `fetched_at` is under 24h old, and makes no request at all;
+backdate it to force the fetch. And an isolated `CODEX_HOME` holding a copy of your
+`auth.json` keeps the probe off your real cache — that copy is a live credential, so
+put it under `mktemp -d` and remove it in a `trap` that fires on a kill as well as a
+clean exit.
 
-Run it in one shell session, start to finish. Splitting it across sessions loses
-`$work` and the `trap` with it, and the copy of `auth.json` stays on disk.
-`catalogue.json` is the one output meant to survive; it carries no credential.
-
-A second run needs `fetched_at` in `$work/codexhome/models_cache.json` backdated
-past 24h, or the CLI answers from the cache and makes no request at all.
+The header and `If-None-Match` observations above came from watching the transport
+itself. That procedure is deliberately not written out here: it decrypts TLS to a
+vendor's private endpoint with your own subscription credential, and nothing in this
+repository needs it repeated. The findings it produced are recorded above and are the
+part that mattered.

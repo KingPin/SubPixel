@@ -183,4 +183,28 @@ describe("the replayable manifest", () => {
     await writeFile(manifestPathFor(image), full.slice(0, full.length / 2));
     expect(await readManifest(image)).toBeUndefined();
   });
+
+  it("refuses a sidecar slot a stranger took after the destination was chosen", async () => {
+    // The gap writeImage cannot cover: the slot was empty when the destination was
+    // picked, and something else filled it while the image was being generated.
+    const image = join(dir, "fox.png");
+    const stranger = '{"notes":"landed mid-run"}';
+    await writeFile(manifestPathFor(image), stranger);
+    await expect(writeManifest(image, ENTRY)).rejects.toThrow(/--overwrite/);
+    expect(await readFile(manifestPathFor(image), "utf8")).toBe(stranger);
+  });
+
+  it("replaces its own sidecar without --overwrite", async () => {
+    const image = join(dir, "fox.png");
+    await writeManifest(image, ENTRY);
+    await writeManifest(image, { ...ENTRY, prompt: "a blue fox" });
+    expect((await readManifest(image))?.prompt).toBe("a blue fox");
+  });
+
+  it("replaces a stranger's sidecar when --overwrite was asked for", async () => {
+    const image = join(dir, "fox.png");
+    await writeFile(manifestPathFor(image), '{"notes":"landed mid-run"}');
+    await writeManifest(image, ENTRY, { overwrite: true });
+    expect((await readManifest(image))?.prompt).toBe(ENTRY.prompt);
+  });
 });

@@ -376,3 +376,31 @@ export function classifyFetchError(
   }
   return new SubmissionUncertain(message, err);
 }
+
+/**
+ * Key for structured data carried alongside a thrown failure.
+ *
+ * A symbol, and non-enumerable below, so attaching a report cannot change how the
+ * error serialises, compares, or prints anywhere that does not ask for it.
+ */
+const DETAILS = Symbol.for("subpixel.details");
+
+/**
+ * Attach structured data to a failure without changing what the failure IS.
+ *
+ * For the case where a run half succeeded: the taxonomy code is what the caller
+ * acts on, but the record of what DID land is the part that stops it redoing the
+ * work. Wrapping the error in a new one instead would collapse the taxonomy — a
+ * class the caller matched on becomes a generic Error, and the exit code with it.
+ */
+export function withDetails<E>(err: E, details: unknown): E {
+  if (typeof err === "object" && err !== null) {
+    Object.defineProperty(err, DETAILS, { value: details, enumerable: false, configurable: true });
+  }
+  return err;
+}
+
+export function detailsOf(err: unknown): unknown {
+  if (typeof err !== "object" || err === null) return undefined;
+  return (err as Record<symbol, unknown>)[DETAILS];
+}

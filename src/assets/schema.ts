@@ -3,7 +3,12 @@ import { redact } from "../core/redact.js";
 import { validateStyle } from "../config/schema.js";
 import { parseSize } from "../engine/prompt.js";
 import { isSafeVariantSuffix } from "../engine/variants.js";
-import type { ImageFormat, ImageQuality, StyleDefinition } from "../core/types.js";
+import { IMAGE_FORMATS, IMAGE_QUALITIES } from "../core/types.js";
+import type {
+  ImageFormat,
+  ImageQuality,
+  StyleDefinition,
+} from "../core/types.js";
 
 /**
  * The names the spec allows for `size`.
@@ -67,10 +72,16 @@ const ASSET_KEYS = [
   "variants",
 ] as const;
 
-const FORMATS: ImageFormat[] = ["png", "jpeg", "webp"];
-const QUALITIES: ImageQuality[] = ["low", "medium", "high", "auto"];
+// From core, not copied. See the note in config/schema.ts.
+const FORMATS = IMAGE_FORMATS;
+const QUALITIES = IMAGE_QUALITIES;
 
-function fail(source: string, where: string, expected: string, received: unknown): never {
+function fail(
+  source: string,
+  where: string,
+  expected: string,
+  received: unknown,
+): never {
   throw new ConfigError(
     `${source}: ${where} must be ${expected}, received ${JSON.stringify(received)}.`,
   );
@@ -101,14 +112,24 @@ function resolveSize(value: unknown, source: string, where: string): string {
   try {
     parseSize(text);
   } catch {
-    fail(source, where, `WIDTHxHEIGHT or one of ${Object.keys(NAMED_SIZES).join(", ")}`, value);
+    fail(
+      source,
+      where,
+      `WIDTHxHEIGHT or one of ${Object.keys(NAMED_SIZES).join(", ")}`,
+      value,
+    );
   }
   return text;
 }
 
-function validateVariant(value: unknown, source: string, where: string): VariantSpec {
+function validateVariant(
+  value: unknown,
+  source: string,
+  where: string,
+): VariantSpec {
   if (typeof value === "number") {
-    if (!Number.isInteger(value) || value < 1) fail(source, where, "a positive whole number", value);
+    if (!Number.isInteger(value) || value < 1)
+      fail(source, where, "a positive whole number", value);
     return { width: value };
   }
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -120,7 +141,9 @@ function validateVariant(value: unknown, source: string, where: string): Variant
     fail(source, `${where}.width`, "a positive whole number", width);
   }
   const suffix =
-    input.suffix === undefined ? undefined : asString(input.suffix, source, `${where}.suffix`);
+    input.suffix === undefined
+      ? undefined
+      : asString(input.suffix, source, `${where}.suffix`);
   if (suffix !== undefined && !isSafeVariantSuffix(suffix)) {
     fail(
       source,
@@ -154,22 +177,35 @@ function validateAsset(
   if (id === "") fail(source, `${where}.id`, "a non-empty string", input.id);
 
   const prompt = asString(input.prompt, source, `${where}.prompt`).trim();
-  if (prompt === "") fail(source, `${where}.prompt`, "a non-empty string", input.prompt);
+  if (prompt === "")
+    fail(source, `${where}.prompt`, "a non-empty string", input.prompt);
 
   const asset: AssetSpec = { id, prompt };
 
-  if (input.out !== undefined) asset.out = asString(input.out, source, `${where}.out`);
-  if (input.size !== undefined) asset.size = resolveSize(input.size, source, `${where}.size`);
+  if (input.out !== undefined)
+    asset.out = asString(input.out, source, `${where}.out`);
+  if (input.size !== undefined)
+    asset.size = resolveSize(input.size, source, `${where}.size`);
   if (input.exactSize !== undefined) {
-    asset.exactSize = resolveSize(input.exactSize, source, `${where}.exactSize`);
+    asset.exactSize = resolveSize(
+      input.exactSize,
+      source,
+      `${where}.exactSize`,
+    );
   }
   if (input.quality !== undefined) {
-    asset.quality = asEnum(input.quality, QUALITIES, source, `${where}.quality`);
+    asset.quality = asEnum(
+      input.quality,
+      QUALITIES,
+      source,
+      `${where}.quality`,
+    );
   }
   if (input.format !== undefined) {
     asset.format = asEnum(input.format, FORMATS, source, `${where}.format`);
   }
-  if (input.style !== undefined) asset.style = asString(input.style, source, `${where}.style`);
+  if (input.style !== undefined)
+    asset.style = asString(input.style, source, `${where}.style`);
   if (input.transparent !== undefined) {
     if (typeof input.transparent !== "boolean") {
       fail(source, `${where}.transparent`, "a boolean", input.transparent);
@@ -185,7 +221,8 @@ function validateAsset(
     );
   }
   if (input.variants !== undefined) {
-    if (!Array.isArray(input.variants)) fail(source, `${where}.variants`, "a list", input.variants);
+    if (!Array.isArray(input.variants))
+      fail(source, `${where}.variants`, "a list", input.variants);
     asset.variants = input.variants.map((entry, i) =>
       validateVariant(entry, source, `${where}.variants[${i}]`),
     );
@@ -218,11 +255,19 @@ export function validateAssetsFile(
       fail(source, "defaults", "an object", input.defaults);
     }
     const d = input.defaults as Record<string, unknown>;
-    if (d.outDir !== undefined) defaults.outDir = asString(d.outDir, source, "defaults.outDir");
-    if (d.style !== undefined) defaults.style = asString(d.style, source, "defaults.style");
-    if (d.size !== undefined) defaults.size = resolveSize(d.size, source, "defaults.size");
+    if (d.outDir !== undefined)
+      defaults.outDir = asString(d.outDir, source, "defaults.outDir");
+    if (d.style !== undefined)
+      defaults.style = asString(d.style, source, "defaults.style");
+    if (d.size !== undefined)
+      defaults.size = resolveSize(d.size, source, "defaults.size");
     if (d.quality !== undefined) {
-      defaults.quality = asEnum(d.quality, QUALITIES, source, "defaults.quality");
+      defaults.quality = asEnum(
+        d.quality,
+        QUALITIES,
+        source,
+        "defaults.quality",
+      );
     }
     if (d.format !== undefined) {
       defaults.format = asEnum(d.format, FORMATS, source, "defaults.format");
@@ -231,15 +276,23 @@ export function validateAssetsFile(
 
   const styles: Record<string, StyleDefinition> = {};
   if (input.styles !== undefined) {
-    if (typeof input.styles !== "object" || input.styles === null || Array.isArray(input.styles)) {
+    if (
+      typeof input.styles !== "object" ||
+      input.styles === null ||
+      Array.isArray(input.styles)
+    ) {
       fail(source, "styles", "an object", input.styles);
     }
-    for (const [name, style] of Object.entries(input.styles as Record<string, unknown>)) {
+    for (const [name, style] of Object.entries(
+      input.styles as Record<string, unknown>,
+    )) {
       styles[name] = validateStyle(style, source, name);
     }
   }
 
-  const assets = input.assets.map((asset, index) => validateAsset(asset, source, index, warn));
+  const assets = input.assets.map((asset, index) =>
+    validateAsset(asset, source, index, warn),
+  );
 
   // Ids name files and name rows in the drift report. Two assets sharing one is
   // always a copy-paste mistake, and letting it through means one silently

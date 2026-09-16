@@ -4,7 +4,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { atomicWrite, ownerIsDead } from "../core/fsx.js";
 import { redact } from "../core/redact.js";
-import { SubpixelError } from "../core/errors.js";
+import { detailsOf, SubpixelError } from "../core/errors.js";
 
 /**
  * Exactly the three values the spec's `get_image_job` contract names.
@@ -34,7 +34,12 @@ export interface JobRecord {
   /** The tool result, present only when `status` is `done`. */
   result?: unknown;
   /** The failure, present only when `status` is `failed`. Never a stack. */
-  error?: { code: string; message: string };
+  /**
+   * `details` is whatever survived the failure — for a partial sync, the assets
+   * that DID land. A poller that only learns "it failed" can only start over,
+   * re-billing everything that already succeeded.
+   */
+  error?: { code: string; message: string; details?: unknown };
 }
 
 export function jobsDirFor(stateDir: string): string {
@@ -128,6 +133,9 @@ export async function failJob(dir: string, id: string, reason: unknown): Promise
     error: {
       code: reason instanceof SubpixelError ? reason.code : "UNKNOWN",
       message: redact(reason instanceof Error ? reason.message : reason),
+      ...(detailsOf(reason) !== undefined
+        ? { details: JSON.parse(redact(JSON.stringify(detailsOf(reason)))) as unknown }
+        : {}),
     },
   });
 }

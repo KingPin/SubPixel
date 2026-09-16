@@ -13,11 +13,26 @@ import type {
   GenerateResult,
   ImageArtifact,
 } from "../core/types.js";
-import { generateViaCodexHttp, type ProviderResult } from "../providers/codex-http.js";
-import { generateViaCodexExec, hasCodexBinary } from "../providers/codex-exec.js";
+import {
+  generateViaCodexHttp,
+  type ProviderResult,
+} from "../providers/codex-http.js";
+import {
+  generateViaCodexExec,
+  hasCodexBinary,
+} from "../providers/codex-exec.js";
 import { resolveChain, runWithFallback } from "../providers/resolve.js";
-import { advancePast, resolveModel, type ResolvedModel } from "../providers/models.js";
-import { formatQuota, loadQuota, saveQuota, shouldWarn } from "../providers/quota.js";
+import {
+  advancePast,
+  resolveModel,
+  type ResolvedModel,
+} from "../providers/models.js";
+import {
+  formatQuota,
+  loadQuota,
+  saveQuota,
+  shouldWarn,
+} from "../providers/quota.js";
 import { chromaKey } from "./chroma.js";
 import { buildVariants, variantPath } from "./variants.js";
 import { loadReferences } from "./references.js";
@@ -46,6 +61,7 @@ import {
   probeDimensions,
   sharpAvailable,
 } from "./sharpx.js";
+import { parseSize } from "./prompt.js";
 
 export type ProviderFn = (
   request: GenerateRequest,
@@ -179,7 +195,8 @@ async function postProcess(
   // tolerance setting removes.
   if (request.transparent) bytes = await chromaKey(bytes, {});
 
-  if (request.exactSize) bytes = await enforceExactSize(bytes, request.exactSize);
+  if (request.exactSize)
+    bytes = await enforceExactSize(bytes, request.exactSize);
 
   // Format conversion is last, and it is a real conversion.
   //
@@ -212,7 +229,9 @@ async function postProcess(
  * the backend returns, and refusing a `--format webp` run on a machine without
  * sharp would break the common case where the backend simply returns WebP.
  */
-export async function preflightPostProcessing(request: GenerateRequest): Promise<void> {
+export async function preflightPostProcessing(
+  request: GenerateRequest,
+): Promise<void> {
   // JPEG has no alpha channel. `postProcess` chroma-keys to PNG and then converts
   // to the requested format, so this combination silently flattens the transparency
   // it was asked to produce. The CLI refuses it too, with flag-specific wording —
@@ -223,6 +242,10 @@ export async function preflightPostProcessing(request: GenerateRequest): Promise
       "transparent cannot produce JPEG, which has no alpha channel. Use png or webp.",
     );
   }
+  // `--size` never went through the parser. It is mirrored into the prompt by
+  // `augmentPrompt`, which calls `describeAspect` on it, so a malformed value failed
+  // deep in aspect-ratio arithmetic rather than here where the flag can be named.
+  if (request.size) parseSize(request.size);
   await preflightExactSize(request.exactSize);
   // Same reasoning as --exact-size: discovering a missing optional dependency after
   // the image is generated costs a unit of quota for an image the user never gets.
@@ -284,6 +307,7 @@ async function publishVariants(
       height: variant.height,
       path: result.path,
       bytes: result.bytes,
+      sha256: result.sha256,
     });
   }
 
@@ -316,8 +340,13 @@ async function withDimensions(
 const UNKNOWN_CACHED_MODEL = "unknown (cached before provenance was recorded)";
 
 function provenanceOf(entry: CacheEntry): CacheProvenance | undefined {
-  if (!entry.model || !entry.backend || entry.effectivePrompt === undefined) return undefined;
-  return { model: entry.model, backend: entry.backend, effectivePrompt: entry.effectivePrompt };
+  if (!entry.model || !entry.backend || entry.effectivePrompt === undefined)
+    return undefined;
+  return {
+    model: entry.model,
+    backend: entry.backend,
+    effectivePrompt: entry.effectivePrompt,
+  };
 }
 
 export async function generate(
@@ -398,7 +427,8 @@ async function runGeneration(
 ): Promise<GenerateResult> {
   const startedAt = Date.now();
   const logger = deps.logger ?? silentLogger;
-  const warnAlways = deps.warnAlways ?? ((message: string) => logger.warn(message));
+  const warnAlways =
+    deps.warnAlways ?? ((message: string) => logger.warn(message));
   const emitEvent = eventSink(deps.onEvent);
   // Terminal events carry how many of the batch are finished. The number only ever
   // increases, and it is the one figure the engine can state honestly: the provider
@@ -473,20 +503,30 @@ async function runGeneration(
     const effectivePrompt = entry.effectivePrompt ?? request.prompt;
     // Before the manifest, so the sidecar records the files that now exist.
     await publishVariants(artifact, bytes, request, writeOptions, warnAlways);
-    await writeManifest(artifact.path, {
-      prompt: request.prompt,
-      effectivePrompt,
-      model,
-      backend,
-      cacheKey: key,
-      sha256: artifact.sha256,
-      bytes: artifact.bytes,
-      format: artifact.format,
-      variants: artifact.variants,
-      skippedVariants: artifact.skippedVariants,
-      ...replayFields(request),
+    await writeManifest(
+      artifact.path,
+      {
+        prompt: request.prompt,
+        effectivePrompt,
+        model,
+        backend,
+        cacheKey: key,
+        sha256: artifact.sha256,
+        bytes: artifact.bytes,
+        format: artifact.format,
+        variants: artifact.variants,
+        skippedVariants: artifact.skippedVariants,
+        ...replayFields(request),
+      },
+      { overwrite: writeOptions.overwrite },
+    );
+    emitEvent({
+      stage: "done",
+      index: 0,
+      progress: ++completed,
+      total: 1,
+      message: artifact.path,
     });
-    emitEvent({ stage: "done", index: 0, progress: ++completed, total: 1, message: artifact.path });
     return {
       images: [artifact],
       // A hit serves one image and never starts a batch.
@@ -508,8 +548,16 @@ async function runGeneration(
       logger.debug(`Cache hit for ${key.slice(0, 12)}; no quota spent.`);
       // Materialise at THIS run's destination. A hit still has to produce the file
       // the caller asked for.
-      const materialised = await materialiseFromCache(hit, destinationFor(0), writeOptions);
-      return finishFromCache(await withDimensions(materialised, hit.data), hit.entry, hit.data);
+      const materialised = await materialiseFromCache(
+        hit,
+        destinationFor(0),
+        writeOptions,
+      );
+      return finishFromCache(
+        await withDimensions(materialised, hit.data),
+        hit.entry,
+        hit.data,
+      );
     }
 
     // Second lookup, on the key the bytes were BANKED under. This is the recovery
@@ -523,7 +571,9 @@ async function runGeneration(
     const rawKey = rawCacheKey(request);
     const rawHit = await lookupCache(deps.stateDir, rawKey);
     if (rawHit) {
-      logger.debug(`Raw-bytes hit for ${rawKey.slice(0, 12)}; re-processing locally, no quota spent.`);
+      logger.debug(
+        `Raw-bytes hit for ${rawKey.slice(0, 12)}; re-processing locally, no quota spent.`,
+      );
       // The SAME function the fresh path uses. A recovered image and a freshly
       // generated one must be byte-identical, or the cache is lying about what it
       // holds.
@@ -533,7 +583,13 @@ async function runGeneration(
         bytes,
       );
       // Index the processed result under the full key so the next run is a plain hit.
-      await storeCache(deps.stateDir, key, artifact, bytes, provenanceOf(rawHit.entry));
+      await storeCache(
+        deps.stateDir,
+        key,
+        artifact,
+        bytes,
+        provenanceOf(rawHit.entry),
+      );
       return finishFromCache(artifact, rawHit.entry, bytes);
     }
   }
@@ -554,140 +610,192 @@ async function runGeneration(
   const resolved = await resolveFn({ override: request.model });
 
   const slots = Array.from({ length: count }, (_, index) => index);
-  for (const index of slots) emitEvent({ stage: "queued", index, total: count });
+  for (const index of slots)
+    emitEvent({ stage: "queued", index, total: count });
 
-  const outcome = await mapWithConcurrency(slots, deps.concurrency ?? 2, async (index) => {
-    try {
-      // The budget starts HERE, not when the command was typed. The spec is explicit
-      // that the timeout begins after slot acquisition, and mapWithConcurrency calls
-      // this worker only once a permit is held. Each image gets its own deadline:
-      // one shared deadline would charge image four for images one through three.
-      const deadline = createDeadline(deps.timeoutMs ?? DEFAULT_TIMEOUT_MS, { label: "generate" });
-      deadline.start();
-
-      // The last thing before the money is spent. Holding the lock is what makes the
-      // cache re-check above meaningful: if the lock was lost between that check and
-      // here, another owner is generating this same image and submitting would buy a
-      // second copy. `assertHeld()` re-reads the record, so it answers for this line.
-      await lock?.assertHeld();
-
-      let result: ProviderResult;
+  const outcome = await mapWithConcurrency(
+    slots,
+    deps.concurrency ?? 2,
+    async (index) => {
       try {
-        result = await callWithModelRecovery(request, resolved, provider, logger, deadline, (event) =>
-          emitEvent({ ...event, index }),
-        );
-      } finally {
-        deadline.dispose();
-      }
-      // Read off THIS worker's result, never off a shared variable. Task 20 puts a
-      // fallback chain behind `provider`, and a sibling worker that falls back to
-      // exec while this one is awaiting sharp would otherwise relabel this image.
-      const backend = result.backend ?? "codex-http";
-
-      if (result.quota) {
-        await saveQuota(join(deps.stateDir, "quota.json"), result.quota);
-        if (shouldWarn(result.quota)) {
-          warnAlways(formatQuota(result.quota));
-        }
-      }
-
-      const raw = result.images[0];
-      if (!raw) throw new OutputError("The backend returned no image data.");
-
-      // Bank the paid bytes IMMEDIATELY, before any local step that can fail.
-
-      // `check()` rather than `assertHeld()`: the bytes are already paid for, so a
-      // lost lock must never throw them away. It only means the shared bank belongs
-      // to someone else now, and this run keeps its image locally.
-      const mayPublish = lock ? await lock.check() : true;
-      if (!mayPublish) {
-        warnAlways(
-          "Another process took over this request's lock, so the result was not added " +
-            "to the shared cache. The image itself is written normally.",
-        );
-      }
-
-      if (count === 1 && mayPublish) {
-        await storeCache(
-          deps.stateDir,
-          rawCacheKey(request),
-          { path: "", bytes: raw.length, format: "png", sha256: sha256(raw) },
-          raw,
-          { model: result.model, backend, effectivePrompt: result.effectivePrompt },
-        ).catch((err: unknown) => {
-          logger.debug(`Could not bank the raw bytes: ${String(err)}`);
+        // The budget starts HERE, not when the command was typed. The spec is explicit
+        // that the timeout begins after slot acquisition, and mapWithConcurrency calls
+        // this worker only once a permit is held. Each image gets its own deadline:
+        // one shared deadline would charge image four for images one through three.
+        const deadline = createDeadline(deps.timeoutMs ?? DEFAULT_TIMEOUT_MS, {
+          label: "generate",
         });
-      }
+        deadline.start();
 
-      emitEvent({ stage: "processing", index, total: count, message: "writing the image" });
-      const bytes = await postProcess(raw, request, warnAlways);
+        // The last thing before the money is spent. Holding the lock is what makes the
+        // cache re-check above meaningful: if the lock was lost between that check and
+        // here, another owner is generating this same image and submitting would buy a
+        // second copy. `assertHeld()` re-reads the record, so it answers for this line.
+        await lock?.assertHeld();
 
-      const artifact = await withDimensions(
-        await writeImage(destinationFor(index), bytes, writeOptions),
-        bytes,
-      );
-      await publishVariants(artifact, bytes, request, writeOptions, warnAlways);
-      await writeManifest(artifact.path, {
-        prompt: request.prompt,
-        effectivePrompt: result.effectivePrompt,
-        model: result.model,
-        backend,
-        cacheKey: key,
-        sha256: artifact.sha256,
-        bytes: artifact.bytes,
-        format: artifact.format,
-        variants: artifact.variants,
-        skippedVariants: artifact.skippedVariants,
-        ...replayFields(request),
-      });
-
-      // Only a single-image request has an unambiguous cache entry.
-      //
-      // Best effort, exactly like the raw bank above, and for a stronger reason: by
-      // this line the image and its manifest are already on disk. An awaited throw
-      // here would reject the worker and a one-image run would never print the path
-      // to a file that exists — the caller loses an artifact they paid for because an
-      // optimisation failed. It is also reachable by configuration rather than by
-      // accident: cache blobs always publish with `overwrite: false`, which needs a
-      // hard link, so a state directory on a filesystem without them fails here on
-      // every single run. `--overwrite` does not help, because it applies to the
-      // image, not to the blob.
-      if (count === 1 && mayPublish) {
-        await storeCache(deps.stateDir, key, artifact, bytes, {
-          model: result.model,
-          backend,
-          effectivePrompt: result.effectivePrompt,
-        }).catch((err: unknown) => {
-          logger.warn(
-            `The image was written, but it could not be added to the cache ` +
-              `(${redact(err)}). The next identical request will regenerate it.`,
+        let result: ProviderResult;
+        try {
+          result = await callWithModelRecovery(
+            request,
+            resolved,
+            provider,
+            logger,
+            deadline,
+            (event) => emitEvent({ ...event, index }),
           );
-        });
-      }
+        } finally {
+          deadline.dispose();
+        }
+        // Read off THIS worker's result, never off a shared variable. Task 20 puts a
+        // fallback chain behind `provider`, and a sibling worker that falls back to
+        // exec while this one is awaiting sharp would otherwise relabel this image.
+        const backend = result.backend ?? "codex-http";
 
-      emitEvent({ stage: "done", index, progress: ++completed, total: count, message: artifact.path });
-      return { artifact, backend, model: result.model, effectivePrompt: result.effectivePrompt };
-    } catch (err) {
-      // The terminal event for this image, whatever went wrong. `mapWithConcurrency`
-      // collects the rejection for the batch report, so this only labels it.
-      emitEvent({ stage: "failed", index, progress: ++completed, total: count, message: redact(err) });
-      throw err;
-    }
-  });
+        if (result.quota) {
+          await saveQuota(join(deps.stateDir, "quota.json"), result.quota);
+          if (shouldWarn(result.quota)) {
+            warnAlways(formatQuota(result.quota));
+          }
+        }
+
+        const raw = result.images[0];
+        if (!raw) throw new OutputError("The backend returned no image data.");
+
+        // Bank the paid bytes IMMEDIATELY, before any local step that can fail.
+
+        // `check()` rather than `assertHeld()`: the bytes are already paid for, so a
+        // lost lock must never throw them away. It only means the shared bank belongs
+        // to someone else now, and this run keeps its image locally.
+        const mayPublish = lock ? await lock.check() : true;
+        if (!mayPublish) {
+          warnAlways(
+            "Another process took over this request's lock, so the result was not added " +
+              "to the shared cache. The image itself is written normally.",
+          );
+        }
+
+        if (count === 1 && mayPublish) {
+          await storeCache(
+            deps.stateDir,
+            rawCacheKey(request),
+            { path: "", bytes: raw.length, format: "png", sha256: sha256(raw) },
+            raw,
+            {
+              model: result.model,
+              backend,
+              effectivePrompt: result.effectivePrompt,
+            },
+          ).catch((err: unknown) => {
+            logger.debug(`Could not bank the raw bytes: ${String(err)}`);
+          });
+        }
+
+        emitEvent({
+          stage: "processing",
+          index,
+          total: count,
+          message: "writing the image",
+        });
+        const bytes = await postProcess(raw, request, warnAlways);
+
+        const artifact = await withDimensions(
+          await writeImage(destinationFor(index), bytes, writeOptions),
+          bytes,
+        );
+        await publishVariants(
+          artifact,
+          bytes,
+          request,
+          writeOptions,
+          warnAlways,
+        );
+        await writeManifest(
+          artifact.path,
+          {
+            prompt: request.prompt,
+            effectivePrompt: result.effectivePrompt,
+            model: result.model,
+            backend,
+            cacheKey: key,
+            sha256: artifact.sha256,
+            bytes: artifact.bytes,
+            format: artifact.format,
+            variants: artifact.variants,
+            skippedVariants: artifact.skippedVariants,
+            ...replayFields(request),
+          },
+          { overwrite: writeOptions.overwrite },
+        );
+
+        // Only a single-image request has an unambiguous cache entry.
+        //
+        // Best effort, exactly like the raw bank above, and for a stronger reason: by
+        // this line the image and its manifest are already on disk. An awaited throw
+        // here would reject the worker and a one-image run would never print the path
+        // to a file that exists — the caller loses an artifact they paid for because an
+        // optimisation failed. It is also reachable by configuration rather than by
+        // accident: cache blobs always publish with `overwrite: false`, which needs a
+        // hard link, so a state directory on a filesystem without them fails here on
+        // every single run. `--overwrite` does not help, because it applies to the
+        // image, not to the blob.
+        if (count === 1 && mayPublish) {
+          await storeCache(deps.stateDir, key, artifact, bytes, {
+            model: result.model,
+            backend,
+            effectivePrompt: result.effectivePrompt,
+          }).catch((err: unknown) => {
+            logger.warn(
+              `The image was written, but it could not be added to the cache ` +
+                `(${redact(err)}). The next identical request will regenerate it.`,
+            );
+          });
+        }
+
+        emitEvent({
+          stage: "done",
+          index,
+          progress: ++completed,
+          total: count,
+          message: artifact.path,
+        });
+        return {
+          artifact,
+          backend,
+          model: result.model,
+          effectivePrompt: result.effectivePrompt,
+        };
+      } catch (err) {
+        // The terminal event for this image, whatever went wrong. `mapWithConcurrency`
+        // collects the rejection for the batch report, so this only labels it.
+        emitEvent({
+          stage: "failed",
+          index,
+          progress: ++completed,
+          total: count,
+          message: redact(err),
+        });
+        throw err;
+      }
+    },
+  );
 
   const produced = outcome.values;
   if (produced.length === 0) {
     // Nothing survived, so there is no partial result worth returning. Re-throw
     // the original error rather than inventing a generic one — the caller needs
     // to know whether this was ContentBlocked, a quota exhaustion, or a timeout.
-    throw outcome.failure ?? new OutputError("The backend returned no image data.");
+    throw (
+      outcome.failure ?? new OutputError("The backend returned no image data.")
+    );
   }
 
   const failures = outcome.outcomes.flatMap((o) =>
     o.status === "rejected" ? [describeFailure(o.index, o.reason)] : [],
   );
   for (const failure of failures) {
-    logger.warn(`Image ${failure.index + 1} of ${count} failed: ${failure.message}`);
+    logger.warn(
+      `Image ${failure.index + 1} of ${count} failed: ${failure.message}`,
+    );
   }
 
   const images: ImageArtifact[] = produced.map((p) => p.artifact);

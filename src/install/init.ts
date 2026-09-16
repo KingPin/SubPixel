@@ -35,6 +35,13 @@ export interface TargetPlan {
   /** The file exactly as it would be written. Absent when nothing would be. */
   content?: string;
   /**
+   * Subpixel's own contribution, for `--dry-run` to print in place of `content`.
+   *
+   * See `Writer.preview`. Absent means the writer owns its whole file and `content`
+   * is already nothing but ours.
+   */
+  preview?: string;
+  /**
    * A note printed beside the target. Usually why nothing was written — `absent`,
    * `conflict`, `unsupported` and `stale` each carry one — and for a forced write,
    * where the contents it replaces were kept.
@@ -206,6 +213,7 @@ async function planTarget(
     ...base,
     state: existing === undefined ? "created" : "updated",
     content,
+    ...(writer.preview ? { preview: writer.preview(writeCtx) } : {}),
     observed: fingerprint(existing),
     ...(discarded
       ? {
@@ -300,18 +308,12 @@ const VERBS: Record<TargetState, string> = {
 };
 
 /**
- * A dry run prints a changed file in full only while "in full" is a screenful.
+ * A backstop on how much a dry run prints for one target.
  *
- * The premise of printing the whole file is that these are a few lines of JSON and a
- * diff would hide the one line that matters. `~/.claude.json` breaks that premise: it
- * is Claude Code's state file, hundreds of kilobytes of session history that
- * `--global --only claude-mcp` merges a single entry into. Printing the merged result
- * would put that state on stdout, into scrollback, and into whatever log captured the
- * run.
- *
- * The limit is on size rather than on that one path, because the hazard belongs to
- * every file we merge into rather than write: any of them can be a state file on a
- * machine we have not seen.
+ * A merging writer previews only its own entry, so the size that reaches here is a
+ * handful of lines whoever the harness is. What the limit still covers is a writer
+ * that owns its whole file — the bundled skill is ours, but it is ours and large, and
+ * a preview nobody can read on one screen is a preview nobody reads.
  */
 const DRY_RUN_FULL_PRINT_LIMIT = 16_384;
 
@@ -358,18 +360,24 @@ export function formatInitPlan(plan: TargetPlan[], dryRun: boolean): string {
   if (dryRun) {
     for (const target of plan) {
       if (target.state !== "created" && target.state !== "updated") continue;
-      const content = target.content!;
-      if (content.length > DRY_RUN_FULL_PRINT_LIMIT) {
+      // The entry when the writer merges, the file when the writer owns it. Never the
+      // merged result: that is the user's other MCP servers and whatever their `env`
+      // blocks hold, and this is the command people run because it is the safe one.
+      const shown = target.preview ?? target.content!;
+      const header =
+        target.preview === undefined
+          ? `--- ${target.path}`
+          : `--- ${target.path}  (subpixel's entry; everything else in the file is left alone)`;
+      if (shown.length > DRY_RUN_FULL_PRINT_LIMIT) {
         lines.push(
           "",
-          `--- ${target.path}`,
-          `${content.length} bytes, not shown. A file this size is the harness's own ` +
-            `state file; init merges its one entry into it and leaves every other key ` +
-            `alone. Read the file itself if you need to see what is in there.`,
+          header,
+          `${shown.length} bytes, not shown. Read the file itself if you need to see ` +
+            `what is in there.`,
         );
         continue;
       }
-      lines.push("", `--- ${target.path}`, content.replace(/\n$/, ""));
+      lines.push("", header, shown.replace(/\n$/, ""));
     }
   }
 

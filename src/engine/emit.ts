@@ -1,6 +1,11 @@
 import { isAbsolute, relative } from "node:path";
 import { redact } from "../core/redact.js";
-import type { BackendName, GenerateResult, ImageFormat } from "../core/types.js";
+import type {
+  BackendName,
+  GenerateResult,
+  ImageFormat,
+  VariantRecord,
+} from "../core/types.js";
 
 const MAX_ALT = 120;
 
@@ -21,6 +26,11 @@ export function altTextFor(prompt: string): string {
   return `${(lastSpace > 20 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`;
 }
 
+/** A variant as `--json` reports it: the record, plus a pasteable relative path. */
+export interface JsonVariant extends VariantRecord {
+  relativePath: string;
+}
+
 export interface JsonImage {
   path: string;
   relativePath: string;
@@ -30,6 +40,21 @@ export interface JsonImage {
   width?: number;
   height?: number;
   alt: string;
+  /**
+   * The rest of `ImageArtifact`, because `--json` is the machine-readable view of a
+   * run and an agent cannot see the stderr warnings that carry the same facts.
+   *
+   * Without `variants` a caller that asked for three widths is told about one file
+   * and has to guess the other names from a naming convention. Without `siblingOf`
+   * it cannot tell that its intended path was taken, so a build step that writes
+   * `hero.png` into a page template silently ships the previous image. Without
+   * `requestedFormat` it cannot tell that the bytes disagree with what it asked for.
+   * All three are already warned about on stderr, which `--json` consumers do not read.
+   */
+  variants?: JsonVariant[];
+  skippedVariants?: number[];
+  siblingOf?: string;
+  requestedFormat?: ImageFormat;
 }
 
 /** One image in a batch that did not make it, as it appears in `--json`. */
@@ -99,6 +124,15 @@ export function toJsonResult(result: GenerateResult, base: string): JsonResult {
       width: image.width,
       height: image.height,
       alt,
+      ...(image.variants && {
+        variants: image.variants.map((variant) => ({
+          ...variant,
+          relativePath: relativeTo(base, variant.path),
+        })),
+      }),
+      ...(image.skippedVariants && { skippedVariants: image.skippedVariants }),
+      ...(image.siblingOf && { siblingOf: image.siblingOf }),
+      ...(image.requestedFormat && { requestedFormat: image.requestedFormat }),
     })),
     model: result.model,
     backend: result.backend,

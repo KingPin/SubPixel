@@ -1,8 +1,8 @@
-import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { parse } from "yaml";
 import { ConfigError } from "../core/errors.js";
+import { within } from "../core/fsx.js";
 import { manifestPathFor } from "../engine/manifest.js";
 import { pathForFormat } from "../engine/output.js";
 import { variantPath } from "../engine/variants.js";
@@ -25,48 +25,6 @@ export interface LoadedAssets {
   dir: string;
   file: AssetsFile;
   assets: ResolvedAsset[];
-}
-
-/**
- * The path with every EXISTING component's symlinks resolved.
- *
- * `path.relative` compares text. A `..` is caught by it; a symlink is not, and
- * `assets.yml` sits in the same repository as the tree it points into — so a
- * checked-in `public -> /etc` makes a lexically clean `public/hero.png` write to
- * /etc/hero.png. Outputs do not exist yet, so the walk resolves the deepest
- * ancestor that does and re-joins the rest.
- *
- * ponytail: a check, not a lock. A symlink planted between this call and the write
- * still wins; closing that needs an O_NOFOLLOW open in the writer.
- */
-function realish(path: string): string {
-  const tail: string[] = [];
-  let head = path;
-  for (;;) {
-    try {
-      return join(realpathSync(head), ...tail);
-    } catch {
-      const parent = dirname(head);
-      // Reached the root without finding anything that exists. Nothing to resolve.
-      if (parent === head) return path;
-      tail.unshift(basename(head));
-      head = parent;
-    }
-  }
-}
-
-function within(dir: string, path: string): string {
-  const absolute = isAbsolute(path) ? path : resolve(dir, path);
-  const rel = relative(realish(dir), realish(absolute));
-  // A manifest is often committed and run by CI. A path that climbs out of the
-  // project turns "generate my assets" into "write wherever this string says",
-  // which is not a capability a YAML file in a pull request should have.
-  if (rel.startsWith("..") || isAbsolute(rel)) {
-    throw new ConfigError(
-      `assets.yml: "${path}" resolves outside the manifest directory (${dir}).`,
-    );
-  }
-  return absolute;
 }
 
 /**
@@ -123,7 +81,7 @@ function buildRequest(
     transparent: asset.transparent === true,
     outputPath: out,
     style,
-    referenceImages: asset.references?.map((path) => within(dir, path)),
+    referenceImages: asset.references?.map((path) => within(dir, path, "assets.yml")),
     // The whole spec, suffix included. Mapping to widths here is what left the
     // declared `hero@sm.webp` with nothing to write it.
     variants: asset.variants,
@@ -161,7 +119,7 @@ function reserveDestinations(dir: string, assets: readonly ResolvedAsset[]): voi
     for (const variant of asset.variants) {
       // `within` again: the suffix is validated at the schema, and this is the
       // check on the joined result. Two cheap guards on the same trust boundary.
-      claim(within(dir, variantPath(asset.out, variant.width, variant.suffix)), asset.id, "variant");
+      claim(within(dir, variantPath(asset.out, variant.width, variant.suffix), "assets.yml"), asset.id, "variant");
     }
   }
 }
@@ -200,7 +158,7 @@ export async function loadAssets(
     // produce `hero.webp`, or the manifest declares a file nothing ever writes.
     const format = asset.format ?? file.defaults.format ?? style?.format ?? "png";
     const extension = format === "jpeg" ? "jpg" : format;
-    const out = within(dir, asset.out ?? `${outDir}/${asset.id}.${extension}`);
+    const out = within(dir, asset.out ?? `${outDir}/${asset.id}.${extension}`, "assets.yml");
     // A declared `out` whose extension contradicts the format is refused, not
     // quietly corrected. `writeImage` names the file after the BYTES, so
     // `out: hero.png` with `format: webp` writes hero.webp while this record — and

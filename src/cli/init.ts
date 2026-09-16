@@ -1,3 +1,4 @@
+import { redact } from "../core/redact.js";
 import { applyInit, formatInitPlan, planInit } from "../install/init.js";
 
 export interface InitCliOptions {
@@ -30,7 +31,11 @@ export async function runInit(options: InitCliOptions = {}): Promise<void> {
     only: parseOnly(options.only),
   });
   if (!options.dryRun) await applyInit(plan);
-  process.stdout.write(`${formatInitPlan(plan, options.dryRun === true)}\n`);
+  // Second line of defence, and the one every other command already stands behind:
+  // nothing leaves this process unmasked. The first is `Writer.preview`, which keeps
+  // unrelated configuration out of the string — this catches a token in a path the
+  // user typed, or in a harness config we do own.
+  process.stdout.write(`${redact(formatInitPlan(plan, options.dryRun === true))}\n`);
   // A conflict and a stale target are the outcomes that need the user to do something
   // — clear the file, or run again — so they are the ones that must not exit 0 into a
   // script that assumes success. Every other state is a finished answer.

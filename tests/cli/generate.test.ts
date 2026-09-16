@@ -5,7 +5,13 @@ import { describe, expect, it, vi } from "vitest";
 
 // vi.mock is hoisted, so the fake has to be declared with it, not above it.
 const generate = vi.fn();
-vi.mock("../../src/engine/generate.js", () => ({ generate }));
+// Only `generate` is faked. `preflightPostProcessing` is the real validation the
+// dry-run path runs, and stubbing it would make these tests assert a preview that
+// never checks anything.
+vi.mock("../../src/engine/generate.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/engine/generate.js")>()),
+  generate,
+}));
 
 const { resolveSharedFields, runGenerate } = await import("../../src/cli/generate.js");
 const { loadConfig } = await import("../../src/config/load.js");
@@ -204,5 +210,56 @@ describe("resolveSharedFields and --transparent", () => {
     expect(() => resolveSharedFields({ transparent: true, format: "jpeg" }, undefined, {} as never)).toThrow(
       /no alpha channel/,
     );
+  });
+});
+
+describe("spx generate progress", () => {
+  /** Run once with the given options, capturing both streams. */
+  async function run(options: Record<string, unknown>) {
+    const out: string[] = [];
+    const err: string[] = [];
+    generate.mockImplementation(async (_request: unknown, deps: { onEvent?: (e: unknown) => void }) => {
+      deps.onEvent?.({ stage: "submitted", index: 0 });
+      deps.onEvent?.({ stage: "written", index: 0, message: "fox.png" });
+      return {
+        images: [
+          { path: "/work/fox.png", bytes: 1, format: "png", sha256: "a".repeat(64) },
+        ],
+        requested: 1,
+        backend: "codex-http",
+        model: "gpt-5.6-sol",
+        cached: false,
+        effectivePrompt: "a red fox",
+        elapsedMs: 12,
+      };
+    });
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      out.push(String(chunk));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      err.push(String(chunk));
+      return true;
+    });
+    try {
+      await runGenerate("a red fox", options);
+    } finally {
+      vi.restoreAllMocks();
+    }
+    return { out: out.join(""), err: err.join("") };
+  }
+
+  it("reports each stage on stderr with an elapsed time", async () => {
+    const { out, err } = await run({});
+    expect(err).toContain("image 1: submitted");
+    expect(err).toContain("image 1: written — fox.png");
+    expect(err).toMatch(/\(\d+\.\ds\)/);
+    // stdout stays the artifact path and nothing else.
+    expect(out.trim()).toBe("/work/fox.png");
+  });
+
+  it("says nothing under --quiet", async () => {
+    const { err } = await run({ quiet: true });
+    expect(err).toBe("");
   });
 });

@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, realpathSync } from "node:fs";
 import {
   access,
   chmod,
@@ -13,8 +13,55 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { hostname } from "node:os";
-import { basename, delimiter, dirname, join } from "node:path";
-import { OutputError } from "./errors.js";
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { ConfigError, OutputError } from "./errors.js";
+
+/**
+ * The path with every EXISTING component's symlinks resolved.
+ *
+ * `path.relative` compares text. A `..` is caught by it; a symlink is not, and
+ * a manifest sits in the same repository as the tree it points into — so a
+ * checked-in `public -> /etc` makes a lexically clean `public/hero.png` write to
+ * /etc/hero.png. Outputs do not exist yet, so the walk resolves the deepest
+ * ancestor that does and re-joins the rest.
+ *
+ * ponytail: a check, not a lock. A symlink planted between this call and the write
+ * still wins; closing that needs an O_NOFOLLOW open in the writer.
+ */
+function realish(path: string): string {
+  const tail: string[] = [];
+  let head = path;
+  for (;;) {
+    try {
+      return join(realpathSync(head), ...tail);
+    } catch {
+      const parent = dirname(head);
+      // Reached the root without finding anything that exists. Nothing to resolve.
+      if (parent === head) return path;
+      tail.unshift(basename(head));
+      head = parent;
+    }
+  }
+}
+
+/**
+ * Resolve `path` against `dir` and refuse anything that lands outside it.
+ *
+ * `subject` names whoever supplied the path, because the two callers are different
+ * trust boundaries with the same failure: a manifest is committed and run by CI,
+ * and an MCP tool call is composed by a model from whatever is in its context. In
+ * both cases a path that climbs out of the project turns "generate my assets" into
+ * "write wherever this string says".
+ */
+export function within(dir: string, path: string, subject: string): string {
+  const absolute = isAbsolute(path) ? path : resolve(dir, path);
+  const rel = relative(realish(dir), realish(absolute));
+  if (rel.startsWith("..") || isAbsolute(rel)) {
+    throw new ConfigError(`${subject}: "${path}" resolves outside ${dir}.`);
+  }
+  return absolute;
+}
+
 
 export interface AtomicWriteOptions {
   /** File mode applied before the rename, so the file is never briefly readable. */

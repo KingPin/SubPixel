@@ -13,7 +13,7 @@ vi.mock("../../src/cli/doctor.js", async (importOriginal) => ({
 const { TOOLS, HANDLERS, callTool, validateArgs } = await import("../../src/mcp/tools.js");
 const { buildProgram } = await import("../../src/cli/index.js");
 const { createJob, completeJob, jobsDirFor } = await import("../../src/mcp/jobs.js");
-const { ConfigError, AuthExpired } = await import("../../src/core/errors.js");
+const { ConfigError, AuthExpired, detailsOf } = await import("../../src/core/errors.js");
 
 const REPORT: DoctorReport = {
   ok: true,
@@ -219,12 +219,57 @@ describe("sync_assets", () => {
     ).rejects.toThrow(AuthExpired);
   });
 
+  it("keeps the report on the failure, so a retry is not the only move", async () => {
+    // Two assets, one provider that dies on the second. Without the report the
+    // agent is told "the sync failed" and nothing else, so its only option is to
+    // run the whole thing again and re-bill the asset that already landed.
+    await writeFile(
+      join(dir, "assets.yml"),
+      "assets:\n  - id: hero\n    prompt: a dashboard\n  - id: icon\n    prompt: a bell\n",
+    );
+
+    const failure = await callTool("sync_assets", {}, {
+      cwd: dir,
+      provider: vi.fn(async () => {
+        throw new AuthExpired("the ChatGPT session expired");
+      }) as never,
+    }).catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(AuthExpired);
+    const report = detailsOf(failure) as { statuses: unknown[]; failures: unknown[] };
+    expect(report.statuses).toHaveLength(2);
+    expect(report.failures.length).toBeGreaterThan(0);
+  });
+
   it("still answers a drift check without calling a provider", async () => {
     await writeFile(join(dir, "assets.yml"), "assets:\n  - id: hero\n    prompt: a dashboard\n");
 
     const report = await callTool("sync_assets", { check: true }, { cwd: dir });
 
     expect(report).toMatchObject({ drift: true });
+  });
+});
+
+describe("path containment", () => {
+  // Every one of these is a path a MODEL composed, from whatever was in its context
+  // — a web page, an issue body, a file it was asked to summarise. A shell path is
+  // typed by the person who owns the shell; these are not, and `out` names a file
+  // the run then writes.
+  it.each([
+    ["generate_image", { prompt: "a fox", out: "../escaped.png" }],
+    ["generate_image", { prompt: "a fox", out_dir: "../.." }],
+    ["generate_image", { prompt: "a fox", reference_images: ["/etc/hosts"] }],
+    ["edit_image", { image: "../../.ssh/id_rsa", instruction: "make it blue" }],
+    ["sync_assets", { check: true, file: "../assets.yml" }],
+  ])("refuses %s with a path outside the project", async (tool, args) => {
+    await expect(callTool(tool, args, { cwd: dir })).rejects.toThrow(/resolves outside/);
+  });
+
+  it("still accepts a path inside the project", async () => {
+    await writeFile(join(dir, "assets.yml"), "assets:\n  - id: hero\n    prompt: a dashboard\n");
+    await expect(
+      callTool("sync_assets", { check: true, file: "assets.yml" }, { cwd: dir }),
+    ).resolves.toMatchObject({ drift: true });
   });
 });
 

@@ -93,6 +93,40 @@ export interface Writer {
    * the harness silently ignores.
    */
   write(existing: string | undefined, ctx: InitContext): string;
+  /**
+   * Subpixel's own contribution to the file, for `--dry-run` to print.
+   *
+   * `write()` returns the MERGED file, which for every target we merge into is
+   * mostly somebody else's configuration: other MCP servers, their `env` blocks, and
+   * whatever tokens those blocks hold. Printing it puts those on stdout, into
+   * scrollback, and into whatever transcript captured the run — by way of the one
+   * command a user runs BECAUSE it is the safe one.
+   *
+   * So a merging writer declares the entry it adds and the dry run prints that
+   * instead. It is not a redaction pass that has to recognise a secret; the unrelated
+   * configuration is never in the string to begin with.
+   *
+   * Absent means the writer owns its whole file, so the merged output is already
+   * nothing but ours and is safe to print in full.
+   */
+  preview?(ctx: InitContext): string;
+}
+
+/**
+ * The `write`/`preview` pair for a harness that keeps servers in a JSON object.
+ *
+ * One declaration rather than two: an entry that drifts from its own preview would
+ * print a promise the write does not keep.
+ */
+function serverWriter(
+  key: string,
+  entry: Record<string, unknown>,
+): Pick<Writer, "write" | "preview"> {
+  const snippet = () => `${JSON.stringify({ [key]: { subpixel: entry } }, null, 2)}\n`;
+  return {
+    write: (existing, ctx) => mergeServerEntry(existing, ctx.dest, key, entry, snippet()),
+    preview: snippet,
+  };
 }
 
 /**
@@ -106,20 +140,43 @@ export interface Writer {
 export const MCP_COMMAND = "npx";
 export const MCP_ARGS = ["-y", "subpixel", "mcp"];
 
-function parseJsonObject(existing: string | undefined, target: string): Record<string, unknown> {
+/**
+ * What to do about a file this writer cannot merge into.
+ *
+ * Every remaining option is worse than doing it by hand, so the error hands over
+ * the entry instead of naming a flag. The commonest cause by far is JSONC: several
+ * of these hosts document `//` comments in their own config, and this merge writes
+ * back through `JSON.stringify`, which would silently delete every one of them.
+ * `--force` REPLACES the file — on a `~/.claude.json` that is the user's session
+ * state as well as their servers, so suggesting it as the remedy for a comment is
+ * an unusually expensive piece of advice.
+ *
+ * Adding a JSONC parser is the wrong fix for the same reason: it gets us as far as
+ * reading the file, and then the write still has to reproduce every comment and
+ * trailing comma exactly where they were.
+ */
+function cannotMerge(target: string, reason: string, snippet: string): ConfigError {
+  return new ConfigError(
+    `${target} ${reason}, so subpixel cannot merge into it without rewriting the file. ` +
+      `Add this entry by hand, keeping whatever else is in there:\n\n${snippet}\n` +
+      `Or re-run with --force to REPLACE the file, which discards anything already in it.`,
+  );
+}
+
+function parseJsonObject(
+  existing: string | undefined,
+  target: string,
+  snippet: string,
+): Record<string, unknown> {
   if (existing === undefined || existing.trim() === "") return {};
   let parsed: unknown;
   try {
     parsed = JSON.parse(existing);
   } catch (err) {
-    throw new ConfigError(
-      `${target} is not valid JSON (${(err as Error).message}). Fix it, or re-run with --force to replace it.`,
-    );
+    throw cannotMerge(target, `is not valid JSON (${(err as Error).message})`, snippet);
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new ConfigError(
-      `${target} does not contain a JSON object. Fix it, or re-run with --force to replace it.`,
-    );
+    throw cannotMerge(target, "does not contain a JSON object", snippet);
   }
   return parsed as Record<string, unknown>;
 }
@@ -147,8 +204,9 @@ function mergeServerEntry(
   target: string,
   key: string,
   entry: Record<string, unknown>,
+  snippet: string,
 ): string {
-  const doc = parseJsonObject(existing, target);
+  const doc = parseJsonObject(existing, target, snippet);
   const servers = asObject(doc[key]);
   return `${JSON.stringify(
     { ...doc, [key]: { ...servers, subpixel: { ...asObject(servers.subpixel), ...entry } } },
@@ -222,11 +280,10 @@ export const WRITERS: Writer[] = [
       path: join(ctx.home, ".claude.json"),
       marker: join(ctx.home, ".claude"),
     }),
-    write: (existing, ctx) =>
-      mergeServerEntry(existing, ctx.dest, "mcpServers", {
-        command: MCP_COMMAND,
-        args: MCP_ARGS,
-      }),
+    ...serverWriter("mcpServers", {
+      command: MCP_COMMAND,
+      args: MCP_ARGS,
+    }),
   },
   {
     // Destination: .cursor/mcp.json (project-scoped)
@@ -243,12 +300,11 @@ export const WRITERS: Writer[] = [
       path: join(ctx.home, ".cursor", "mcp.json"),
       marker: join(ctx.home, ".cursor"),
     }),
-    write: (existing, ctx) =>
-      mergeServerEntry(existing, ctx.dest, "mcpServers", {
-        type: "stdio",
-        command: MCP_COMMAND,
-        args: MCP_ARGS,
-      }),
+    ...serverWriter("mcpServers", {
+      type: "stdio",
+      command: MCP_COMMAND,
+      args: MCP_ARGS,
+    }),
   },
   {
     // Destination: ~/.codeium/windsurf/mcp_config.json (USER-scoped)
@@ -260,11 +316,10 @@ export const WRITERS: Writer[] = [
     title: "Windsurf MCP server",
     scope: "user",
     path: (ctx) => join(ctx.home, ".codeium", "windsurf", "mcp_config.json"),
-    write: (existing, ctx) =>
-      mergeServerEntry(existing, ctx.dest, "mcpServers", {
-        command: MCP_COMMAND,
-        args: MCP_ARGS,
-      }),
+    ...serverWriter("mcpServers", {
+      command: MCP_COMMAND,
+      args: MCP_ARGS,
+    }),
   },
   {
     // Destination: ~/.cline/data/settings/cline_mcp_settings.json (USER-scoped)
@@ -278,12 +333,11 @@ export const WRITERS: Writer[] = [
     title: "Cline MCP server",
     scope: "user",
     path: (ctx) => join(ctx.home, ".cline", "data", "settings", "cline_mcp_settings.json"),
-    write: (existing, ctx) =>
-      mergeServerEntry(existing, ctx.dest, "mcpServers", {
-        command: MCP_COMMAND,
-        args: MCP_ARGS,
-        disabled: false,
-      }),
+    ...serverWriter("mcpServers", {
+      command: MCP_COMMAND,
+      args: MCP_ARGS,
+      disabled: false,
+    }),
   },
   {
     // Destination: ${XDG_CONFIG_HOME:-~/.config}/kilo/kilo.jsonc (USER-scoped)
@@ -302,12 +356,11 @@ export const WRITERS: Writer[] = [
     title: "Kilo Code MCP server",
     scope: "user",
     path: (ctx) => join(ctx.xdgConfigHome ?? join(ctx.home, ".config"), "kilo", "kilo.jsonc"),
-    write: (existing, ctx) =>
-      mergeServerEntry(existing, ctx.dest, "mcp", {
-        type: "local",
-        command: [MCP_COMMAND, ...MCP_ARGS],
-        enabled: true,
-      }),
+    ...serverWriter("mcp", {
+      type: "local",
+      command: [MCP_COMMAND, ...MCP_ARGS],
+      enabled: true,
+    }),
   },
   {
     // Destination: AGENTS.md (project-scoped)
@@ -329,5 +382,8 @@ export const WRITERS: Writer[] = [
       // write and cannot safely reorder.
       return `${existing.replace(/\n+$/, "")}\n\n${AGENTS_BLOCK}\n`;
     },
+    // The marked block and nothing else. An AGENTS.md is prose a team wrote, and the
+    // merge above returns all of it.
+    preview: () => `${AGENTS_BLOCK}\n`,
   },
 ];

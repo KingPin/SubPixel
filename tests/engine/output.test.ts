@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -195,6 +195,57 @@ describe("writeImage", () => {
     expect(again.path).toBe(first.path);
     expect(again.siblingOf).toBeUndefined();
     expect(warnings).toEqual([]);
+  });
+
+  it("does not take a destination whose sidecar slot holds a stranger's file", async () => {
+    // The image name is free; the sidecar name is not. `writeManifest` replaces its
+    // target unconditionally right after this returns, so taking `hero.png` here
+    // would destroy a JSON file nobody passed --overwrite for.
+    const stranger = '{"notes":"hand written, not ours"}';
+    await writeFile(join(dir, "hero.png.json"), stranger);
+    const warnings: string[] = [];
+    const artifact = await writeImage(join(dir, "hero.png"), PNG, {
+      warn: (m) => warnings.push(m),
+    });
+    expect(artifact.path).toBe(join(dir, "hero-v2.png"));
+    expect(artifact.siblingOf).toBe(join(dir, "hero.png"));
+    expect(await readFile(join(dir, "hero.png.json"), "utf8")).toBe(stranger);
+    expect(warnings.join(" ")).toContain("hero.png.json");
+  });
+
+  it("takes the destination back when the sidecar there is one of ours", async () => {
+    // A leftover manifest from an image that was deleted is not a stranger's file.
+    // Stepping around it would strand the name forever.
+    await writeFile(
+      join(dir, "hero.png.json"),
+      JSON.stringify({
+        prompt: "a fox",
+        effectivePrompt: "a fox",
+        model: "m",
+        backend: "codex-http",
+        cacheKey: "k",
+        sha256: "0".repeat(64),
+        bytes: 9,
+        format: "png",
+      }),
+    );
+    const artifact = await writeImage(join(dir, "hero.png"), PNG);
+    expect(artifact.path).toBe(join(dir, "hero.png"));
+  });
+
+  it("steps around a sidecar slot it cannot read at all", async () => {
+    // A directory at `hero.png.json` is not an empty slot. Reading it fails with
+    // EISDIR, and treating any read failure as "nothing there" would publish the
+    // image and then fail on the manifest, leaving a picture with no provenance.
+    await mkdir(join(dir, "hero.png.json"));
+    const artifact = await writeImage(join(dir, "hero.png"), PNG);
+    expect(artifact.path).toBe(join(dir, "hero-v2.png"));
+  });
+
+  it("replaces a stranger's sidecar when overwrite was actually asked for", async () => {
+    await writeFile(join(dir, "hero.png.json"), '{"notes":"hand written"}');
+    const artifact = await writeImage(join(dir, "hero.png"), PNG, { overwrite: true });
+    expect(artifact.path).toBe(join(dir, "hero.png"));
   });
 
   it("writes a -v2 sibling instead of overwriting", async () => {

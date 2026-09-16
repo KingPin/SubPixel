@@ -1,6 +1,6 @@
 import type { SubpixelConfig } from "../config/schema.js";
+import { describeEvent } from "../core/events.js";
 import type { EventSink } from "../core/events.js";
-import type { GenerationEvent } from "../core/types.js";
 
 /**
  * How long a generating tool call stays open before it hands back a `job_id`.
@@ -41,12 +41,6 @@ export interface ProgressReporter {
   stop(): void;
 }
 
-function describe(event: GenerationEvent): string {
-  const subject = event.assetId ?? (event.index === undefined ? undefined : `image ${event.index + 1}`);
-  const head = subject ? `${subject}: ${event.stage}` : event.stage;
-  return event.message ? `${head} — ${event.message}` : head;
-}
-
 /**
  * Turn engine events into protocol progress notifications.
  *
@@ -80,7 +74,7 @@ export function createProgressReporter(
       void Promise.resolve(
         send({
           method: "notifications/progress",
-          params: { progressToken, progress, message: describe(event) },
+          params: { progressToken, progress, message: describeEvent(event) },
         }),
         // A host that closed the stream is not a reason to abandon a paid image.
       ).catch(() => {});

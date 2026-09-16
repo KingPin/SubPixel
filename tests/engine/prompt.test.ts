@@ -23,6 +23,15 @@ describe("parseSize", () => {
     expect(() => parseSize("1024x")).toThrow(ConfigError);
     expect(() => parseSize("0x100")).toThrow(ConfigError);
   });
+
+  // A width long enough to parse as Infinity used to survive the positive check and
+  // reach gcd, where Infinity % Infinity is NaN, no recursion reaches b === 0, and the
+  // process died of a RangeError naming nothing the user typed.
+  it("rejects a dimension too large to be an image", () => {
+    expect(() => parseSize(`${"9".repeat(400)}x1`)).toThrow(ConfigError);
+    expect(() => describeAspect(`${"9".repeat(400)}x1`)).toThrow(ConfigError);
+    expect(() => parseSize("16385x16385")).toThrow(/at most 16384/);
+  });
 });
 
 describe("describeAspect", () => {

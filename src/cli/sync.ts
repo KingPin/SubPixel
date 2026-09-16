@@ -43,7 +43,9 @@ export async function checkAssets(
   loaded: LoadedAssets,
   probe: AssetProbe = diskProbe,
 ): Promise<AssetStatus[]> {
-  return planAssets(loaded.assets, probe);
+  // `verify` here and nowhere else. A check's whole output is the word "current",
+  // so it is the run that has to have read the files back.
+  return planAssets(loaded.assets, probe, { verify: true });
 }
 
 /**

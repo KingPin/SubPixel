@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,11 +10,12 @@ import { WRITERS, type InitContext, type Scope, type Writer } from "./writers.js
 /**
  * What `init` decided about one target.
  *
- * `absent`, `conflict`, and `unsupported` are all "nothing was written", but they
- * are different answers and a user acts on them differently: `absent` means the
+ * `absent`, `conflict`, `unsupported`, and `stale` are all "nothing was written", but
+ * they are different answers and a user acts on them differently: `absent` means the
  * harness is not installed, `conflict` means it is and we refused to guess at its
- * config, and `unsupported` means `--global` was asked for a target that only exists
- * inside a project.
+ * config, `unsupported` means `--global` was asked for a target that only exists
+ * inside a project, and `stale` means the file moved under us between the plan and
+ * the write.
  */
 export type TargetState =
   | "created"
@@ -21,7 +23,8 @@ export type TargetState =
   | "unchanged"
   | "absent"
   | "conflict"
-  | "unsupported";
+  | "unsupported"
+  | "stale";
 
 export interface TargetPlan {
   id: string;
@@ -31,8 +34,20 @@ export interface TargetPlan {
   state: TargetState;
   /** The file exactly as it would be written. Absent when nothing would be. */
   content?: string;
-  /** Why nothing was written. Present for `absent`, `conflict`, and `unsupported`. */
+  /** Why nothing was written. Present for `absent`, `conflict`, `unsupported`, `stale`. */
   reason?: string;
+  /**
+   * What was in the file when the plan read it, as a hash.
+   *
+   * `applyInit` writes a whole file built by merging into what `planInit` read, so
+   * anything written to that file in between is inside what we are about to
+   * overwrite. `~/.claude.json` is the case that matters: Claude Code writes it while
+   * it runs, which is exactly when a user runs `spx init --global` from inside it.
+   *
+   * A hash rather than the bytes, because a state file's contents are not ours to
+   * hold in memory for longer than the merge needs them.
+   */
+  observed?: string;
 }
 
 export interface InitOptions {
@@ -89,6 +104,12 @@ function selectWriters(only: string[] | undefined): Writer[] {
     );
   }
   return WRITERS.filter((writer) => only.includes(writer.id));
+}
+
+/** `TargetPlan.observed`. A file that is not there is a state worth recognising too. */
+function fingerprint(existing: string | undefined): string {
+  if (existing === undefined) return "absent";
+  return createHash("sha256").update(existing).digest("hex");
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -160,7 +181,12 @@ async function planTarget(
   }
 
   if (content === existing) return { ...base, state: "unchanged", content };
-  return { ...base, state: existing === undefined ? "created" : "updated", content };
+  return {
+    ...base,
+    state: existing === undefined ? "created" : "updated",
+    content,
+    observed: fingerprint(existing),
+  };
 }
 
 /** Decide what every target needs. Reads the filesystem; writes nothing. */
@@ -198,16 +224,35 @@ async function writeMode(target: TargetPlan): Promise<number | undefined> {
   return target.scope === "user" ? 0o600 : undefined;
 }
 
-/** Write the targets that need writing. Returns the ones that were written. */
+/**
+ * Write the targets that need writing. Returns the ones that were written.
+ *
+ * Each write is a whole file built out of what `planInit` read, so a target that
+ * changed in between is a target whose change is inside what we would overwrite. The
+ * write is refused and the plan entry is marked `stale`; re-running merges into what
+ * is there now, which is the answer the user wants anyway.
+ *
+ * This narrows the window rather than closing it — no lock is taken, and the harness
+ * that owns the file would not be holding ours. What it rules out is the case we can
+ * see: destroying a change we already know about.
+ */
 export async function applyInit(plan: TargetPlan[]): Promise<TargetPlan[]> {
   const pending = plan.filter(
     (target) => target.state === "created" || target.state === "updated",
   );
+  const written: TargetPlan[] = [];
   for (const target of pending) {
+    const now = fingerprint(await readFile(target.path, "utf8").catch(() => undefined));
+    if (target.observed !== undefined && now !== target.observed) {
+      target.state = "stale";
+      target.reason = "changed while init was reading it; run init again";
+      continue;
+    }
     const mode = await writeMode(target);
     await atomicWrite(target.path, target.content!, mode !== undefined ? { mode } : {});
+    written.push(target);
   }
-  return pending;
+  return written;
 }
 
 const VERBS: Record<TargetState, string> = {
@@ -217,6 +262,7 @@ const VERBS: Record<TargetState, string> = {
   absent: "not installed",
   conflict: "CONFLICT",
   unsupported: "project only",
+  stale: "CHANGED",
 };
 
 /**
@@ -254,6 +300,17 @@ export function formatInitPlan(plan: TargetPlan[], dryRun: boolean): string {
   const conflicts = plan.filter((target) => target.state === "conflict");
   if (conflicts.length > 0) {
     lines.push("", "Nothing was written to the files above. Re-run with --force to replace them.");
+  }
+
+  // Deliberately not the --force advice above: forcing would hit the same check, and
+  // the fix is a fresh read rather than a bigger hammer.
+  const stale = plan.filter((target) => target.state === "stale");
+  if (stale.length > 0) {
+    lines.push(
+      "",
+      "The files above changed while init was running, so nothing was written to " +
+        "them. Run init again to merge into what is there now.",
+    );
   }
 
   // An opt-in target is absent from the report entirely, so the report has to say it

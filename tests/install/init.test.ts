@@ -206,6 +206,23 @@ describe("applyInit", () => {
     expect((await stat(join(home, ".claude.json"))).mode & 0o777).toBe(0o600);
   });
 
+  it("refuses to write a file that changed after the plan read it", async () => {
+    // Claude Code writes ~/.claude.json while it runs, which is exactly when someone
+    // runs `spx init --global` from inside it. The write is a whole file built from
+    // what the plan read, so anything written in between is inside what it overwrites.
+    await mkdir(join(home, ".claude"), { recursive: true });
+    const path = join(home, ".claude.json");
+    await writeFile(path, JSON.stringify({ numStartups: 7 }));
+
+    const staged = await planClaudeMcp({ global: true });
+    await writeFile(path, JSON.stringify({ numStartups: 8 }));
+
+    expect(await applyInit(staged)).toEqual([]);
+    expect(staged[0]!.state).toBe("stale");
+    const doc = JSON.parse(await readFile(path, "utf8")) as { numStartups: number };
+    expect(doc.numStartups).toBe(8);
+  });
+
   it("names the file it actually failed to parse", async () => {
     await mkdir(join(home, ".claude"), { recursive: true });
     await writeFile(join(home, ".claude.json"), "{ this is not json\n");

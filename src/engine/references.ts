@@ -58,7 +58,7 @@ export async function readImageFile(path: string): Promise<{ data: Buffer; forma
 }
 
 /**
- * Load one reference, refusing anything over the cap BEFORE it is in memory.
+ * Read one reference, refusing anything over the cap BEFORE it is in memory.
  *
  * The size comes from stat, not from the buffer. Reading first and measuring after
  * means the 3 GiB file the user pointed at by mistake is resident in this process
@@ -68,14 +68,18 @@ export async function readImageFile(path: string): Promise<{ data: Buffer; forma
  * `budget` is what is left of the whole-request cap. Same reason: the tenth
  * reference should be refused before it is read, not after.
  *
+ * Shared by both readers. `loadReference` turns the bytes into a request body and
+ * `referenceHashes` turns them into hashes, but the limit is a property of the
+ * FILE, so the reader that skips the copy must not also skip the guard.
+ *
  * ponytail: a stat is a check, not a lock. A file that grows between the stat and
  * the read is still read whole; the cap that matters for the transport is applied
  * to the bytes in hand below.
  */
-export async function loadReference(
+async function readReferenceWithinCaps(
   path: string,
-  budget: number = MAX_REFERENCE_TOTAL_BYTES,
-): Promise<LoadedReference> {
+  budget: number,
+): Promise<{ data: Buffer; format: ImageFormat }> {
   const cap = Math.min(MAX_REFERENCE_BYTES, budget);
   let declared: number | undefined;
   try {
@@ -92,13 +96,22 @@ export async function loadReference(
     );
   }
 
-  const { data, format } = await readImageFile(path);
+  const read = await readImageFile(path);
 
-  if (data.length > cap) {
+  if (read.data.length > cap) {
     throw new ConfigError(
-      `Reference image "${path}" is too large: ${mib(data.length)}, cap ${mib(MAX_REFERENCE_BYTES)}.`,
+      `Reference image "${path}" is too large: ${mib(read.data.length)}, cap ${mib(MAX_REFERENCE_BYTES)}.`,
     );
   }
+
+  return read;
+}
+
+export async function loadReference(
+  path: string,
+  budget: number = MAX_REFERENCE_TOTAL_BYTES,
+): Promise<LoadedReference> {
+  const { data, format } = await readReferenceWithinCaps(path, budget);
 
   return {
     path,
@@ -110,16 +123,35 @@ export async function loadReference(
 }
 
 /**
- * The digest of a reference's CONTENTS, and nothing else.
+ * The digests of a reference set's CONTENTS, and nothing else.
  *
  * `loadReference` builds a base64 data URL for the request body — a second copy of
- * the file, a third longer than the first. Every caller that only wants the hash
- * for a cache key was paying for that copy and throwing it away; `spx sync --check`
- * did it once per reference per asset, on every run, having sent nothing anywhere.
+ * the file, a third longer than the first. A caller that only wants the hashes for a
+ * cache key was paying for that copy and throwing it away; `spx sync --check` did it
+ * once per reference per asset, on every run, having sent nothing anywhere.
  */
-export async function referenceDigest(path: string): Promise<string> {
-  const { data } = await readImageFile(path);
-  return createHash("sha256").update(data).digest("hex");
+export async function referenceHashes(paths: string[] | undefined): Promise<string[]> {
+  if (!paths || paths.length === 0) return [];
+
+  // Same shape and the same caps as `loadReferences`, because the same set of files
+  // is being read. Skipping the base64 copy is the optimisation; skipping the guard
+  // was not part of it, and `spx sync --check` never reaches `loadReferences`, so
+  // this is the only place the limits get applied on that run.
+  const hashes: string[] = [];
+  let total = 0;
+  for (const path of paths) {
+    const { data } = await readReferenceWithinCaps(path, MAX_REFERENCE_TOTAL_BYTES - total);
+    total += data.length;
+    if (total > MAX_REFERENCE_TOTAL_BYTES) {
+      throw new ConfigError(
+        `Reference images are too large combined: ${mib(total)} across ${hashes.length + 1} files, ` +
+          `cap ${mib(MAX_REFERENCE_TOTAL_BYTES)}.`,
+      );
+    }
+    hashes.push(createHash("sha256").update(data).digest("hex"));
+  }
+
+  return hashes;
 }
 
 export async function loadReferences(paths: string[] | undefined): Promise<LoadedReference[]> {

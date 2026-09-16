@@ -8,6 +8,7 @@ import {
   loadReference,
   loadReferences,
   readImageFile,
+  referenceHashes,
 } from "../../src/engine/references.js";
 import { TINY_PNG_BASE64 } from "../fixtures/tiny.png.js";
 
@@ -109,6 +110,30 @@ describe("loadReferences", () => {
     const paths = [];
     for (let i = 0; i < 6; i += 1) paths.push(await tempFile(`${i}.png`, big));
     await expect(loadReferences(paths)).rejects.toThrow(/combined.*2\.png/s);
+  });
+});
+
+describe("referenceHashes", () => {
+  it("hashes the same bytes loadReference does", async () => {
+    const path = await tempFile("ref.png", PNG);
+    const [hash] = await referenceHashes([path]);
+    expect(hash).toBe((await loadReference(path)).sha256);
+  });
+
+  it("applies the per-file cap, even though it sends nothing", async () => {
+    // `spx sync --check` only ever hashes. Skipping the base64 copy is the
+    // optimisation; skipping the cap would let a 3 GiB file become resident on a
+    // run that was never going to transmit it.
+    const big = Buffer.concat([PNG, Buffer.alloc(MAX_REFERENCE_BYTES)]);
+    const path = await tempFile("huge.png", big);
+    await expect(referenceHashes([path])).rejects.toThrow(/too large/);
+  });
+
+  it("applies the whole-set cap too", async () => {
+    const big = Buffer.concat([PNG, Buffer.alloc(MAX_REFERENCE_BYTES - PNG.length - 1)]);
+    const paths = [];
+    for (let i = 0; i < 5; i += 1) paths.push(await tempFile(`${i}.png`, big));
+    await expect(referenceHashes(paths)).rejects.toThrow(/combined/);
   });
 });
 

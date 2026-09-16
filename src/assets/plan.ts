@@ -2,7 +2,7 @@ import { access, readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { cacheKey } from "../engine/cache.js";
 import { readManifest, type ManifestEntry } from "../engine/manifest.js";
-import { referenceDigest } from "../engine/references.js";
+import { referenceHashes } from "../engine/references.js";
 import { sha256 } from "../engine/output.js";
 import { variantPath } from "../engine/variants.js";
 import { redact } from "../core/redact.js";
@@ -53,13 +53,7 @@ export const diskProbe: AssetProbe = {
       return undefined;
     }
   },
-  // Sequential, like `loadReferences`: short lists, and a deterministic first
-  // failure is what an error message needs.
-  referenceHashes: async (paths) => {
-    const hashes: string[] = [];
-    for (const path of paths ?? []) hashes.push(await referenceDigest(path));
-    return hashes;
-  },
+  referenceHashes,
 };
 
 export interface PlanOptions {

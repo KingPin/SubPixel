@@ -134,8 +134,9 @@ commit the result.
 `spx "a red fox"` is shorthand for `spx generate "a red fox"`.
 
 Project settings — the named styles `--style` and `spx styles` read, the default
-model, the output directory — live in a `subpixel.config.json` found by walking up
-from the working directory, or under a `subpixel` key in `package.json`.
+backend, the output directory — live in a `subpixel.config.json` found by walking up
+from the working directory, or under a `subpixel` key in `package.json`. The driver
+model is not one of them; it comes from Codex, and `--model` pins it per run.
 
 Full flags, exit codes, and the configuration file formats are in
 [docs/reference/cli.md](docs/reference/cli.md).

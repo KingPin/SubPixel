@@ -58,6 +58,17 @@ describe("planInit", () => {
     }
   });
 
+  it("plans only the targets --only names", async () => {
+    const targets = await planInit({ cwd, home, env, only: ["claude-mcp", "agents-md"] });
+    expect(targets.map((t) => t.id)).toEqual(["claude-mcp", "agents-md"]);
+  });
+
+  it("rejects an id no writer answers to", async () => {
+    // Silently planning nothing for a typo leaves the user believing the harness they
+    // asked for is configured.
+    await expect(planInit({ cwd, home, env, only: ["cursed"] })).rejects.toThrow(/cursed/);
+  });
+
   it("writes nothing", async () => {
     await plan();
     expect(await tree(cwd)).toEqual([]);
@@ -82,6 +93,11 @@ describe("applyInit", () => {
     expect(initIsCurrent(second)).toBe(true);
     expect(await applyInit(second)).toEqual([]);
     expect(await Promise.all(files.map((file) => readFile(file, "utf8")))).toEqual(before);
+  });
+
+  it("writes only what --only planned", async () => {
+    await applyInit(await planInit({ cwd, home, env, only: ["claude-mcp"] }));
+    expect(await tree(cwd)).toEqual([join(cwd, ".mcp.json")]);
   });
 
   it("keeps an MCP server someone else configured", async () => {
@@ -140,6 +156,10 @@ describe("formatInitPlan", () => {
     // The launch command is the one line a reader is checking for.
     expect(rendered).toContain('"npx"');
     expect(rendered).toContain('"subpixel"');
+  });
+
+  it("prints the id --only expects beside each target", async () => {
+    expect(formatInitPlan(await plan(), false)).toContain("(claude-mcp — Claude Code MCP server)");
   });
 
   it("warns that a user-scoped entry is not project-scoped", async () => {

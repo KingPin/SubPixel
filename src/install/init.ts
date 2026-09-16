@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { atomicWrite } from "../core/fsx.js";
-import { SubpixelError } from "../core/errors.js";
+import { ConfigError, SubpixelError } from "../core/errors.js";
 import { WRITERS, type InitContext, type Scope, type Writer } from "./writers.js";
 
 /**
@@ -35,6 +35,28 @@ export interface InitOptions {
   force?: boolean;
   /** The bundled skill text. Read from the package when absent. */
   skill?: string;
+  /** Writer ids to plan, in place of every writer. Absent or empty means all of them. */
+  only?: string[];
+}
+
+/**
+ * Resolve `--only` to the writers it names.
+ *
+ * An unknown id throws rather than being ignored, because the alternative is a run
+ * that reports "nothing to do" for a typo and leaves the user believing the harness
+ * they asked for is configured.
+ */
+function selectWriters(only: string[] | undefined): Writer[] {
+  if (only === undefined || only.length === 0) return WRITERS;
+  const known = WRITERS.map((writer) => writer.id);
+  const unknown = only.filter((id) => !known.includes(id));
+  if (unknown.length > 0) {
+    throw new ConfigError(
+      `Unknown init target${unknown.length > 1 ? "s" : ""}: ${unknown.join(", ")}. ` +
+        `Known targets: ${known.join(", ")}.`,
+    );
+  }
+  return WRITERS.filter((writer) => only.includes(writer.id));
 }
 
 async function pathExists(path: string): Promise<boolean> {
@@ -95,7 +117,9 @@ export async function planInit(options: InitOptions = {}): Promise<TargetPlan[]>
     skill: options.skill ?? (await bundledSkill()),
     ...(env.XDG_CONFIG_HOME ? { xdgConfigHome: env.XDG_CONFIG_HOME } : {}),
   };
-  return Promise.all(WRITERS.map((writer) => planTarget(writer, ctx, options.force === true)));
+  return Promise.all(
+    selectWriters(options.only).map((writer) => planTarget(writer, ctx, options.force === true)),
+  );
 }
 
 /** Write the targets that need writing. Returns the ones that were written. */
@@ -130,7 +154,11 @@ export function formatInitPlan(plan: TargetPlan[], dryRun: boolean): string {
   if (dryRun) lines.push("Dry run. Nothing was written.", "");
 
   for (const target of plan) {
-    lines.push(`${VERBS[target.state].padEnd(14)} ${target.path}  (${target.title})`);
+    // The id is printed because it is the only place a user can read the vocabulary
+    // `--only` expects, and a flag whose values are undiscoverable is a flag nobody uses.
+    lines.push(
+      `${VERBS[target.state].padEnd(14)} ${target.path}  (${target.id} — ${target.title})`,
+    );
     if (target.reason !== undefined) lines.push(`               ${target.reason}`);
   }
 

@@ -151,24 +151,28 @@ it is safe to run on every pull request.
 spx init              # write the skill and MCP config for the harnesses on this machine
 spx init --dry-run    # print every file that would be written, and write nothing
 spx init --force      # replace a config file that could not be parsed
+spx init --only cursor,kilo    # write those two targets and nothing else
 ```
 
 | Flag | Meaning |
 | --- | --- |
 | `--dry-run` | Render every file that would be written. Writes nothing. |
 | `--force` | Replace a config file that could not be parsed, instead of skipping it. |
+| `--only <targets>` | Comma-separated target ids, in place of every target. An unknown id is an error. |
 
 `init` writes each harness the file it actually reads:
 
-| Target | Destination | Scope |
+| Target id | Destination | Scope |
 | --- | --- | --- |
-| Claude Code skill | `.claude/skills/subpixel/SKILL.md` | project |
-| Claude Code MCP | `.mcp.json` | project |
-| Cursor | `.cursor/mcp.json` | project |
-| Windsurf | `~/.codeium/windsurf/mcp_config.json` | user |
-| Cline | `~/.cline/data/settings/cline_mcp_settings.json` | user |
-| Kilo Code | `${XDG_CONFIG_HOME:-~/.config}/kilo/kilo.jsonc` | user |
-| Harnesses with no MCP | `AGENTS.md` | project |
+| `claude-skill` | `.claude/skills/subpixel/SKILL.md` | project |
+| `claude-mcp` | `.mcp.json` | project |
+| `cursor` | `.cursor/mcp.json` | project |
+| `windsurf` | `~/.codeium/windsurf/mcp_config.json` | user |
+| `cline` | `~/.cline/data/settings/cline_mcp_settings.json` | user |
+| `kilo` | `${XDG_CONFIG_HOME:-~/.config}/kilo/kilo.jsonc` | user |
+| `agents-md` | `AGENTS.md` | project |
+
+Every run prints the id beside each target, so `--only` never needs this table.
 
 A harness whose config directory does not exist is skipped and reported as "not
 installed". The three project-scoped files with no directory to detect — the skill,

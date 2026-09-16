@@ -32,7 +32,7 @@ export interface InitContext {
 export type Scope = "project" | "user";
 
 export interface Writer {
-  /** Stable id, used by `--only` and by the report. */
+  /** Stable id, named by `--only` and printed by the report. */
   id: string;
   /** One line for the report, naming the harness a human would recognise. */
   title: string;

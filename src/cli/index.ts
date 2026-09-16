@@ -192,6 +192,7 @@ export async function buildProgram(): Promise<Command> {
     .description("Write the subpixel skill and MCP server config for the agent harnesses on this machine")
     .option("--dry-run", "render every file that would be written, and write nothing")
     .option("--force", "replace a config file that could not be parsed, instead of skipping it")
+    .option("--only <targets>", "comma-separated target ids, in place of every target")
     .action(runInit);
 
   program

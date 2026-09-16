@@ -198,12 +198,15 @@ buys it nothing while its tool schemas cost the model context on every turn. Eve
 says so at the foot of the report.
 
 A harness whose config directory does not exist is skipped and reported as "not
-installed". The three project-scoped files with no directory to detect — the skill,
-`.mcp.json`, and `AGENTS.md` — are always written.
+installed". The project-scoped files with no directory to detect — the skill and
+`AGENTS.md` — are always written. `.mcp.json` has no directory to detect either, but
+it is opt-in, so it is written only under `--only claude-mcp`.
 
 Every writer is parse-merge-write. An MCP server someone else configured survives, a
 second run produces a byte-identical file, and a file that cannot be parsed is
-reported as a conflict and left alone. A run with any conflict exits 2.
+reported as a conflict and left alone. A file that changes between the plan and the
+write is reported as changed and left alone too — run `init` again and it merges into
+what is there now. A run with any conflict or any changed file exits 2.
 
 **A user-scoped entry is not project-scoped.** Windsurf, Cline, and Kilo Code keep one
 MCP config for every project — and so does everything `--global` writes — so the entry

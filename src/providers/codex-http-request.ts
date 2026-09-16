@@ -45,6 +45,7 @@ export interface ResponsesBody {
   input: Array<{ type: "message"; role: "user"; content: Array<InputTextPart | InputImagePart> }>;
   tools: ImageToolParams[];
   tool_choice: { type: "image_generation" };
+  reasoning: { effort: "low" };
   parallel_tool_calls: false;
   store: false;
   stream: true;
@@ -74,6 +75,12 @@ export function buildBody(
     input: [{ type: "message", role: "user", content }],
     tools: [buildImageToolParams(request)],
     tool_choice: { type: "image_generation" },
+    // Pinned, not inherited. The exec backend passes `model_reasoning_effort=low`
+    // explicitly; this path sent nothing, so the cost tracked whichever slug
+    // `resolveModel` happened to return. Half the listed catalogue defaults to
+    // `medium`, so the bill moved when the Codex cache reordered. The driver's only
+    // job is one forced tool call, so there is nothing for extra effort to buy.
+    reasoning: { effort: "low" },
     // One image per request keeps the failure blast radius and the quota cost small.
     parallel_tool_calls: false,
     store: false,

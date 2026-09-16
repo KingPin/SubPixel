@@ -68,6 +68,14 @@ describe("buildBody", () => {
     expect(body.tool_choice).toEqual({ type: "image_generation" });
   });
 
+  it("pins low reasoning effort instead of inheriting the model's default", () => {
+    // Half the listed catalogue defaults to `medium`. Leaving this out makes the
+    // cost of a generation depend on which slug the Codex cache ranks first.
+    for (const model of ["gpt-6-astra", "gpt-5.6-terra"]) {
+      expect(buildBody({ prompt: "x" }, model, "x").reasoning).toEqual({ effort: "low" });
+    }
+  });
+
   it("attaches reference images as input_image parts, encoded, never as a path", () => {
     const body = buildBody(
       {

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -17,6 +17,11 @@ beforeEach(async () => {
 
 function plan() {
   return planInit({ cwd, home, env });
+}
+
+/** The Claude Code MCP entry is opt-in, so every test about it has to ask for it. */
+function planClaudeMcp(extra: { force?: boolean; global?: boolean } = {}) {
+  return planInit({ cwd, home, env, only: ["claude-mcp"], ...extra });
 }
 
 /** Make every optional harness look installed. */
@@ -42,7 +47,6 @@ describe("planInit", () => {
     // to carry and there is no directory to detect.
     expect(state).toMatchObject({
       "claude-skill": "created",
-      "claude-mcp": "created",
       "agents-md": "created",
       cursor: "absent",
       windsurf: "absent",
@@ -56,6 +60,78 @@ describe("planInit", () => {
     for (const target of await plan()) {
       expect(target.state).toBe("created");
     }
+  });
+
+  it("leaves the Claude Code MCP entry out until --only asks for it", async () => {
+    // Claude Code reads the skill and runs the CLI from its own shell. The server's
+    // tool schemas would sit in its context on every turn and buy it nothing.
+    const targets = await plan();
+    expect(targets.map((t) => t.id)).not.toContain("claude-mcp");
+    expect((await planClaudeMcp()).map((t) => t.id)).toEqual(["claude-mcp"]);
+  });
+
+  it("plans only the targets --only names", async () => {
+    const targets = await planInit({
+      cwd,
+      home,
+      env,
+      only: ["claude-mcp", "agents-md"],
+    });
+    expect(targets.map((t) => t.id)).toEqual(["claude-mcp", "agents-md"]);
+  });
+
+  it("rejects an id no writer answers to", async () => {
+    // Silently planning nothing for a typo leaves the user believing the harness they
+    // asked for is configured.
+    await expect(planInit({ cwd, home, env, only: ["cursed"] })).rejects.toThrow(/cursed/);
+  });
+
+  it("rejects an empty selection rather than widening it to the default set", async () => {
+    // `--only ''` and `--only ,` both arrive as []. Reading that as "no preference"
+    // makes a malformed flag write every default target — the opposite of narrowing.
+    await expect(planInit({ cwd, home, env, only: [] })).rejects.toThrow(/No init target/);
+  });
+
+  it("sends a project target to its user-scoped file under --global", async () => {
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await mkdir(join(home, ".cursor"), { recursive: true });
+    const targets = await planInit({ cwd, home, env, global: true });
+    const path = Object.fromEntries(targets.map((t) => [t.id, t.path]));
+    expect(path["claude-skill"]).toBe(join(home, ".claude", "skills", "subpixel", "SKILL.md"));
+    expect(path["cursor"]).toBe(join(home, ".cursor", "mcp.json"));
+    const [claudeMcp] = await planClaudeMcp({ global: true });
+    expect(claudeMcp!.path).toBe(join(home, ".claude.json"));
+    // Already user scoped, so --global leaves it where it was.
+    expect(path["kilo"]).toBe(join(home, ".config", "kilo", "kilo.jsonc"));
+    expect(targets.every((t) => t.state !== "created" || t.scope === "user")).toBe(true);
+  });
+
+  it("detects the harness before writing a global config for it", async () => {
+    // Without ~/.claude, a global run must not create one: the project-scoped skill
+    // and .mcp.json are written unconditionally only because they cost a project
+    // nothing, and a stray directory in $HOME is not the same bargain.
+    const targets = [
+      ...(await planInit({ cwd, home, env, global: true })),
+      ...(await planClaudeMcp({ global: true })),
+    ];
+    const state = Object.fromEntries(targets.map((t) => [t.id, t.state]));
+    expect(state).toMatchObject({
+      "claude-skill": "absent",
+      "claude-mcp": "absent",
+    });
+  });
+
+  it("reports a project-only target as unsupported instead of writing it", async () => {
+    const targets = await planInit({
+      cwd,
+      home,
+      env,
+      global: true,
+      only: ["agents-md"],
+    });
+    expect(targets[0]!.state).toBe("unsupported");
+    await applyInit(targets);
+    expect(await tree(cwd)).toEqual([]);
   });
 
   it("writes nothing", async () => {
@@ -72,7 +148,6 @@ describe("applyInit", () => {
     expect(await applyInit(first)).toHaveLength(first.length);
 
     const files = await tree(cwd);
-    expect(files).toContain(join(cwd, ".mcp.json"));
     expect(files).toContain(join(cwd, "AGENTS.md"));
     expect(files).toContain(join(cwd, ".claude", "skills", "subpixel", "SKILL.md"));
 
@@ -84,12 +159,90 @@ describe("applyInit", () => {
     expect(await Promise.all(files.map((file) => readFile(file, "utf8")))).toEqual(before);
   });
 
+  it("writes only what --only planned", async () => {
+    await applyInit(await planInit({ cwd, home, env, only: ["claude-mcp"] }));
+    expect(await tree(cwd)).toEqual([join(cwd, ".mcp.json")]);
+  });
+
+  it("keeps the rest of ~/.claude.json when it adds the server", async () => {
+    // That file is Claude Code's own state, not a config we own. Merging it wrong
+    // costs the user their session history.
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({
+        numStartups: 7,
+        mcpServers: { other: { command: "other-server" } },
+      }),
+    );
+
+    await applyInit(await planInit({ cwd, home, env, global: true, only: ["claude-mcp"] }));
+
+    const doc = JSON.parse(await readFile(join(home, ".claude.json"), "utf8")) as {
+      numStartups: number;
+      mcpServers: Record<string, unknown>;
+    };
+    expect(doc.numStartups).toBe(7);
+    expect(Object.keys(doc.mcpServers).sort()).toEqual(["other", "subpixel"]);
+  });
+
+  it("leaves the mode of a file it merges into alone", async () => {
+    // atomicWrite renames a new inode over the target, so the mode is ours to carry
+    // over. Handing a 0600 ~/.claude.json back at 0644 opens one user's session state
+    // to every other account on the machine, silently.
+    await mkdir(join(home, ".claude"), { recursive: true });
+    const path = join(home, ".claude.json");
+    await writeFile(path, JSON.stringify({ numStartups: 7 }));
+    await chmod(path, 0o600);
+
+    await applyInit(await planClaudeMcp({ global: true }));
+
+    expect((await stat(path)).mode & 0o777).toBe(0o600);
+  });
+
+  it("creates a user-scoped config private rather than umask-wide", async () => {
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await applyInit(await planClaudeMcp({ global: true }));
+    expect((await stat(join(home, ".claude.json"))).mode & 0o777).toBe(0o600);
+  });
+
+  it("refuses to write a file that changed after the plan read it", async () => {
+    // Claude Code writes ~/.claude.json while it runs, which is exactly when someone
+    // runs `spx init --global` from inside it. The write is a whole file built from
+    // what the plan read, so anything written in between is inside what it overwrites.
+    await mkdir(join(home, ".claude"), { recursive: true });
+    const path = join(home, ".claude.json");
+    await writeFile(path, JSON.stringify({ numStartups: 7 }));
+
+    const staged = await planClaudeMcp({ global: true });
+    await writeFile(path, JSON.stringify({ numStartups: 8 }));
+
+    expect(await applyInit(staged)).toEqual([]);
+    expect(staged[0]!.state).toBe("stale");
+    const doc = JSON.parse(await readFile(path, "utf8")) as { numStartups: number };
+    expect(doc.numStartups).toBe(8);
+  });
+
+  it("names the file it actually failed to parse", async () => {
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await writeFile(join(home, ".claude.json"), "{ this is not json\n");
+    const [target] = await planInit({
+      cwd,
+      home,
+      env,
+      global: true,
+      only: ["claude-mcp"],
+    });
+    expect(target!.state).toBe("conflict");
+    expect(target!.reason).toContain(join(home, ".claude.json"));
+  });
+
   it("keeps an MCP server someone else configured", async () => {
     await writeFile(
       join(cwd, ".mcp.json"),
       `${JSON.stringify({ mcpServers: { other: { command: "other-server" } } }, null, 2)}\n`,
     );
-    await applyInit(await plan());
+    await applyInit(await planClaudeMcp());
 
     const doc = JSON.parse(await readFile(join(cwd, ".mcp.json"), "utf8")) as {
       mcpServers: Record<string, unknown>;
@@ -100,15 +253,37 @@ describe("applyInit", () => {
   it("reports a conflict and writes nothing, until --force", async () => {
     await writeFile(join(cwd, ".mcp.json"), "{ this is not json\n");
 
-    const blocked = await plan();
+    const blocked = await planClaudeMcp();
     expect(blocked.find((t) => t.id === "claude-mcp")?.state).toBe("conflict");
     await applyInit(blocked);
     expect(await readFile(join(cwd, ".mcp.json"), "utf8")).toBe("{ this is not json\n");
 
-    const forced = await planInit({ cwd, home, env, force: true });
+    const forced = await planClaudeMcp({ force: true });
     expect(forced.find((t) => t.id === "claude-mcp")?.state).toBe("updated");
     await applyInit(forced);
     const doc = JSON.parse(await readFile(join(cwd, ".mcp.json"), "utf8")) as {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(doc.mcpServers.subpixel).toBeDefined();
+  });
+
+  it("keeps what --force discards instead of dropping it", async () => {
+    // --force is the one write that does not merge, so it is the one write that can
+    // lose something. Under --global the target is ~/.claude.json, which is Claude
+    // Code's session state: repairing the harness must not also be the act that
+    // throws the history away.
+    await mkdir(join(home, ".claude"), { recursive: true });
+    const target = join(home, ".claude.json");
+    const before = '{ "numStartups": 8, and then the file was truncated\n';
+    await writeFile(target, before, { mode: 0o600 });
+
+    const forced = await planClaudeMcp({ force: true, global: true });
+    expect(forced.find((t) => t.id === "claude-mcp")?.reason).toContain(".claude.json.bak");
+    await applyInit(forced);
+
+    expect(await readFile(`${target}.bak`, "utf8")).toBe(before);
+    expect((await stat(`${target}.bak`)).mode & 0o777).toBe(0o600);
+    const doc = JSON.parse(await readFile(target, "utf8")) as {
       mcpServers: Record<string, unknown>;
     };
     expect(doc.mcpServers.subpixel).toBeDefined();
@@ -123,7 +298,7 @@ describe("applyInit", () => {
       JSON.stringify({ mcpServers: { other: { command: "echo" } } }, null, 2),
     );
 
-    await applyInit(await planInit({ cwd, home, env, force: true }));
+    await applyInit(await planClaudeMcp({ force: true }));
 
     const doc = JSON.parse(await readFile(join(cwd, ".mcp.json"), "utf8")) as {
       mcpServers: Record<string, unknown>;
@@ -134,12 +309,24 @@ describe("applyInit", () => {
 
 describe("formatInitPlan", () => {
   it("renders every file a dry run would write, and says it wrote nothing", async () => {
+    await installEverything();
     const rendered = formatInitPlan(await plan(), true);
     expect(rendered).toContain("Dry run. Nothing was written.");
-    expect(rendered).toContain(join(cwd, ".mcp.json"));
+    expect(rendered).toContain(join(cwd, ".cursor", "mcp.json"));
     // The launch command is the one line a reader is checking for.
     expect(rendered).toContain('"npx"');
     expect(rendered).toContain('"subpixel"');
+  });
+
+  it("prints the id --only expects beside each target", async () => {
+    expect(formatInitPlan(await plan(), false)).toContain("(agents-md — AGENTS.md instructions)");
+  });
+
+  it("names the opt-in target it did not write, and how to ask for it", async () => {
+    // It is absent from the listing entirely, so the report is the only place a user
+    // can learn the target exists.
+    expect(formatInitPlan(await plan(), false)).toContain("--only claude-mcp");
+    expect(formatInitPlan(await planClaudeMcp(), false)).not.toContain("Not written by default");
   });
 
   it("warns that a user-scoped entry is not project-scoped", async () => {
@@ -152,9 +339,25 @@ describe("formatInitPlan", () => {
     expect(formatInitPlan(await plan(), false)).not.toContain("apply to every project you open");
   });
 
+  it("does not dump a harness state file into the dry run", async () => {
+    // ~/.claude.json is Claude Code's session state, and --global merges one entry into
+    // it. Printing the merged file in full would put that state on stdout and into any
+    // log that captured the run.
+    await mkdir(join(home, ".claude"), { recursive: true });
+    const secret = "sk-not-a-real-key-but-treat-it-as-one";
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({ note: secret, padding: "x".repeat(20_000) }),
+    );
+    const rendered = formatInitPlan(await planClaudeMcp({ global: true }), true);
+    expect(rendered).toContain(join(home, ".claude.json"));
+    expect(rendered).toContain("not shown");
+    expect(rendered).not.toContain(secret);
+  });
+
   it("tells the user how to clear a conflict", async () => {
     await writeFile(join(cwd, ".mcp.json"), "{ this is not json\n");
-    const rendered = formatInitPlan(await plan(), false);
+    const rendered = formatInitPlan(await planClaudeMcp(), false);
     expect(rendered).toContain("CONFLICT");
     expect(rendered).toContain("--force");
   });

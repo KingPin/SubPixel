@@ -49,11 +49,17 @@ spx init
 ```
 
 `spx init` finds the agent harnesses installed on this machine and writes each one the
-config it reads: a Claude Code skill, an MCP server entry for Claude Code, Cursor,
-Windsurf, Cline, and Kilo Code, and an `AGENTS.md` snippet for harnesses with no MCP
-support. It is parse-merge-write throughout — unrelated servers survive, a second run
-changes nothing, and `--dry-run` prints every file it would write without touching the
-disk.
+config it reads: a Claude Code skill, an MCP server entry for Cursor, Windsurf, Cline,
+and Kilo Code, and an `AGENTS.md` snippet for harnesses with no MCP support. Add
+`--global` to configure them for every project instead of this one, and `--only` to
+pick targets by id. It is parse-merge-write throughout — unrelated servers survive, a
+second run changes nothing, and `--dry-run` prints every file it would write without
+touching the disk.
+
+Claude Code gets the skill and not an MCP entry. It can run the CLI from the shell it
+already has, and a skill costs nothing until an image is actually wanted, while an MCP
+server's tool schemas sit in the model's context on every turn. Ask for the entry with
+`spx init --only claude-mcp` if you want it anyway.
 
 The MCP server is `spx mcp`, a stdio server exposing seven tools: `generate_image`,
 `edit_image`, `sync_assets`, `list_styles`, `list_models`, `get_image_job`, and

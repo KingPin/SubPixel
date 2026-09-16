@@ -19,9 +19,12 @@ const open: Client[] = [];
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "subpixel-mcp-"));
-  // A short cut-over keeps the job-path tests honest without making them slow, and
-  // exercises the config key at the same time.
-  await writeFile(join(dir, "subpixel.config.json"), JSON.stringify({ mcp: { cutoverMs: 60 } }));
+  // A generous cut-over, because the flaky direction is the fast one: a test that
+  // expects an inline answer is asserting that the whole call beat a wall clock, and
+  // on a loaded runner it does not. The job-path tests want the opposite — a provider
+  // that loses to the clock, which load only makes more certain — so they shorten it
+  // for themselves with SUBPIXEL_MCP_CUTOVER_MS.
+  await writeFile(join(dir, "subpixel.config.json"), JSON.stringify({ mcp: { cutoverMs: 5000 } }));
   delete process.env.SUBPIXEL_MCP_CUTOVER_MS;
 });
 
@@ -146,6 +149,7 @@ describe("the MCP server", () => {
   });
 
   it("hands back a job id when the host is not watching, and polls to done", async () => {
+    process.env.SUBPIXEL_MCP_CUTOVER_MS = "60";
     const provider = async () => {
       await new Promise((done) => setTimeout(done, 200));
       return IMAGE;
@@ -296,6 +300,7 @@ describe("the MCP server", () => {
   });
 
   it("hands back one job for a whole slow sync run", async () => {
+    process.env.SUBPIXEL_MCP_CUTOVER_MS = "60";
     await manifest();
     const provider = async () => {
       await new Promise((done) => setTimeout(done, 200));
@@ -312,7 +317,7 @@ describe("the MCP server", () => {
     await manifest();
     await writeFile(
       join(dir, "subpixel.config.json"),
-      JSON.stringify({ mcp: { cutoverMs: 60 }, budget: { maxImagesPerRun: 1 } }),
+      JSON.stringify({ mcp: { cutoverMs: 5000 }, budget: { maxImagesPerRun: 1 } }),
     );
     const provider = vi.fn(async () => IMAGE);
 

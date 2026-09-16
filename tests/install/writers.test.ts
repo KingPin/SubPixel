@@ -7,6 +7,8 @@ const ctx: InitContext = {
   cwd: "/project",
   home: "/home/someone",
   skill: "---\nname: subpixel\n---\n\nbody\n",
+  // Only reached in an error message. `planTarget` replaces it with the real path.
+  dest: "/project/some-config.json",
 };
 
 /**

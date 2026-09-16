@@ -72,6 +72,38 @@ describe("toJsonResult", () => {
     expect(json.images[0]!.relativePath).toBe("/work/assets/a-red-fox-1234abcd.png");
   });
 
+  it("reports variants, skipped widths, and a sibling redirect", () => {
+    const json = toJsonResult(
+      {
+        ...RESULT,
+        images: [
+          {
+            ...RESULT.images[0]!,
+            requestedFormat: "webp" as const,
+            siblingOf: "/work/assets/hero.png",
+            variants: [
+              { width: 640, height: 960, path: "/work/assets/hero@640.png", bytes: 512 },
+            ],
+            skippedVariants: [2048],
+          },
+        ],
+      },
+      "/work",
+    );
+    const image = json.images[0]!;
+    expect(image.variants?.[0]?.relativePath).toBe("assets/hero@640.png");
+    expect(image.variants?.[0]?.bytes).toBe(512);
+    expect(image.skippedVariants).toEqual([2048]);
+    expect(image.siblingOf).toBe("/work/assets/hero.png");
+    expect(image.requestedFormat).toBe("webp");
+  });
+
+  it("omits the variant fields when there are none", () => {
+    const image = toJsonResult(RESULT, "/work").images[0]!;
+    expect(image).not.toHaveProperty("variants");
+    expect(image).not.toHaveProperty("siblingOf");
+  });
+
   it("round-trips through JSON.stringify", () => {
     expect(() => JSON.parse(JSON.stringify(toJsonResult(RESULT, "/work")))).not.toThrow();
   });

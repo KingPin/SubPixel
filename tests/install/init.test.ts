@@ -280,6 +280,22 @@ describe("formatInitPlan", () => {
     expect(formatInitPlan(await plan(), false)).not.toContain("apply to every project you open");
   });
 
+  it("does not dump a harness state file into the dry run", async () => {
+    // ~/.claude.json is Claude Code's session state, and --global merges one entry into
+    // it. Printing the merged file in full would put that state on stdout and into any
+    // log that captured the run.
+    await mkdir(join(home, ".claude"), { recursive: true });
+    const secret = "sk-not-a-real-key-but-treat-it-as-one";
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({ note: secret, padding: "x".repeat(20_000) }),
+    );
+    const rendered = formatInitPlan(await planClaudeMcp({ global: true }), true);
+    expect(rendered).toContain(join(home, ".claude.json"));
+    expect(rendered).toContain("not shown");
+    expect(rendered).not.toContain(secret);
+  });
+
   it("tells the user how to clear a conflict", async () => {
     await writeFile(join(cwd, ".mcp.json"), "{ this is not json\n");
     const rendered = formatInitPlan(await planClaudeMcp(), false);

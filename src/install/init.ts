@@ -199,12 +199,23 @@ const VERBS: Record<TargetState, string> = {
 };
 
 /**
- * Render the plan for a human.
+ * A dry run prints a changed file in full only while "in full" is a screenful.
  *
- * A dry run prints each changed file in full rather than a line diff. The files are
- * a few lines of JSON, so the whole thing fits on a screen, and a merged config is
- * exactly the kind of output where a diff hides the one line that matters — the
- * launch command — inside context the reader skims.
+ * The premise of printing the whole file is that these are a few lines of JSON and a
+ * diff would hide the one line that matters. `~/.claude.json` breaks that premise: it
+ * is Claude Code's state file, hundreds of kilobytes of session history that
+ * `--global --only claude-mcp` merges a single entry into. Printing the merged result
+ * would put that state on stdout, into scrollback, and into whatever log captured the
+ * run.
+ *
+ * The limit is on size rather than on that one path, because the hazard belongs to
+ * every file we merge into rather than write: any of them can be a state file on a
+ * machine we have not seen.
+ */
+const DRY_RUN_FULL_PRINT_LIMIT = 16_384;
+
+/**
+ * Render the plan for a human.
  */
 export function formatInitPlan(plan: TargetPlan[], dryRun: boolean): string {
   const lines: string[] = [];
@@ -235,7 +246,18 @@ export function formatInitPlan(plan: TargetPlan[], dryRun: boolean): string {
   if (dryRun) {
     for (const target of plan) {
       if (target.state !== "created" && target.state !== "updated") continue;
-      lines.push("", `--- ${target.path}`, target.content!.replace(/\n$/, ""));
+      const content = target.content!;
+      if (content.length > DRY_RUN_FULL_PRINT_LIMIT) {
+        lines.push(
+          "",
+          `--- ${target.path}`,
+          `${content.length} bytes, not shown. A file this size is the harness's own ` +
+            `state file; init merges its one entry into it and leaves every other key ` +
+            `alone. Read the file itself if you need to see what is in there.`,
+        );
+        continue;
+      }
+      lines.push("", `--- ${target.path}`, content.replace(/\n$/, ""));
     }
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "subpixel",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Image generation and editing for AI coding agents, powered by your existing ChatGPT/Codex subscription.",
   "license": "Apache-2.0",
   "author": "KingPin <28669+KingPin@users.noreply.github.com>",

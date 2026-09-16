@@ -99,8 +99,12 @@ export async function sidecarIsOursToWrite(imagePath: string): Promise<boolean> 
   let raw: string;
   try {
     raw = await readFile(manifestPathFor(imagePath), "utf8");
-  } catch {
-    return true;
+  } catch (err) {
+    // ENOENT is the only error that means "nothing is there". A sidecar slot that
+    // holds a directory, or one this process cannot read, is a slot we cannot write
+    // — treating that as empty publishes the image and then fails on the manifest,
+    // leaving a picture on disk with no record of what produced it.
+    return (err as NodeJS.ErrnoException).code === "ENOENT";
   }
   try {
     return isManifestEntry(JSON.parse(raw));

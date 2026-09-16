@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -231,6 +231,15 @@ describe("writeImage", () => {
     );
     const artifact = await writeImage(join(dir, "hero.png"), PNG);
     expect(artifact.path).toBe(join(dir, "hero.png"));
+  });
+
+  it("steps around a sidecar slot it cannot read at all", async () => {
+    // A directory at `hero.png.json` is not an empty slot. Reading it fails with
+    // EISDIR, and treating any read failure as "nothing there" would publish the
+    // image and then fail on the manifest, leaving a picture with no provenance.
+    await mkdir(join(dir, "hero.png.json"));
+    const artifact = await writeImage(join(dir, "hero.png"), PNG);
+    expect(artifact.path).toBe(join(dir, "hero-v2.png"));
   });
 
   it("replaces a stranger's sidecar when overwrite was actually asked for", async () => {

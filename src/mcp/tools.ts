@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { loadConfig } from "../config/load.js";
 import type { SubpixelConfig } from "../config/schema.js";
-import { ConfigError } from "../core/errors.js";
+import { ConfigError, withDetails } from "../core/errors.js";
 import type { EventSink } from "../core/events.js";
 import { within } from "../core/fsx.js";
 import { redact } from "../core/redact.js";
@@ -516,7 +516,11 @@ export const HANDLERS: Record<string, Handler> = {
     // while handing it a report full of them. The taxonomy code is the half the
     // model acts on — `AUTH_EXPIRED` means run doctor, `RATE_LIMITED` means wait —
     // and `failures` inside the report carries the per-asset detail regardless.
-    if (failure !== undefined) throw failure;
+    //
+    // The report rides along. Throwing it away told an agent "the sync failed" and
+    // nothing else, so its only move was to run the whole thing again — re-billing
+    // every asset that had already succeeded before the failure landed.
+    if (failure !== undefined) throw withDetails(failure, report);
     return report;
   },
   list_styles: async (args, deps) => {

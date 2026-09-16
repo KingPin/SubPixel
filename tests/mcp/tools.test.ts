@@ -13,7 +13,7 @@ vi.mock("../../src/cli/doctor.js", async (importOriginal) => ({
 const { TOOLS, HANDLERS, callTool, validateArgs } = await import("../../src/mcp/tools.js");
 const { buildProgram } = await import("../../src/cli/index.js");
 const { createJob, completeJob, jobsDirFor } = await import("../../src/mcp/jobs.js");
-const { ConfigError, AuthExpired } = await import("../../src/core/errors.js");
+const { ConfigError, AuthExpired, detailsOf } = await import("../../src/core/errors.js");
 
 const REPORT: DoctorReport = {
   ok: true,
@@ -217,6 +217,28 @@ describe("sync_assets", () => {
         }) as never,
       }),
     ).rejects.toThrow(AuthExpired);
+  });
+
+  it("keeps the report on the failure, so a retry is not the only move", async () => {
+    // Two assets, one provider that dies on the second. Without the report the
+    // agent is told "the sync failed" and nothing else, so its only option is to
+    // run the whole thing again and re-bill the asset that already landed.
+    await writeFile(
+      join(dir, "assets.yml"),
+      "assets:\n  - id: hero\n    prompt: a dashboard\n  - id: icon\n    prompt: a bell\n",
+    );
+
+    const failure = await callTool("sync_assets", {}, {
+      cwd: dir,
+      provider: vi.fn(async () => {
+        throw new AuthExpired("the ChatGPT session expired");
+      }) as never,
+    }).catch((err: unknown) => err);
+
+    expect(failure).toBeInstanceOf(AuthExpired);
+    const report = detailsOf(failure) as { statuses: unknown[]; failures: unknown[] };
+    expect(report.statuses).toHaveLength(2);
+    expect(report.failures.length).toBeGreaterThan(0);
   });
 
   it("still answers a drift check without calling a provider", async () => {

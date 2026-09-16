@@ -3,7 +3,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { loadConfig } from "../config/load.js";
-import { SubpixelError } from "../core/errors.js";
+import { detailsOf, SubpixelError } from "../core/errors.js";
 import { redact } from "../core/redact.js";
 import { packageVersion } from "../core/version.js";
 import { createJob, completeJob, failJob, jobsDirFor, reapOrphans } from "./jobs.js";
@@ -116,9 +116,23 @@ export async function runTool(
  */
 function errorResult(err: unknown): { content: Array<{ type: "text"; text: string }>; isError: true } {
   const code = err instanceof SubpixelError ? err.code : "UNKNOWN";
-  const message = redact(err instanceof Error ? err.message : String(err));
+  const message = err instanceof Error ? err.message : String(err);
+  // `details` is whatever survived the failure — for a partial sync, the list of
+  // assets that DID land. Without it the model's only move is to run the whole
+  // thing again, which re-bills everything that already succeeded.
+  const details = detailsOf(err);
   return {
-    content: [{ type: "text", text: JSON.stringify({ error: { code, message } }, null, 2) }],
+    content: [
+      {
+        type: "text",
+        // The WHOLE document, not just the message: details is a report assembled
+        // from user text — prompts, paths, style names — and the message is only
+        // one of the strings in it.
+        text: redact(
+          JSON.stringify({ error: { code, message, ...(details !== undefined && { details }) } }, null, 2),
+        ),
+      },
+    ],
     isError: true,
   };
 }

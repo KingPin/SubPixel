@@ -17,8 +17,9 @@ The path of the written file goes to stdout. Everything else goes to stderr.
 npm install -g subpixel        # or: npx subpixel <command>
 ```
 
-Every example below uses `spx`, the globally installed binary. Without the global
-install, each one works as `npx subpixel <command>` instead.
+Examples you run by hand use `spx`, the globally installed binary. Without the
+global install, each one works as `npx subpixel <command>` instead — which is what
+the CI and MCP snippets below use, since neither can assume a global install.
 
 Node 24 or newer. Authentication comes from the
 [Codex CLI](https://github.com/openai/codex), which you need once for the login:

@@ -1,8 +1,9 @@
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { loadConfig } from "../config/load.js";
 import type { SubpixelConfig } from "../config/schema.js";
 import { ConfigError } from "../core/errors.js";
 import type { EventSink } from "../core/events.js";
+import { within } from "../core/fsx.js";
 import { redact } from "../core/redact.js";
 import { IMAGE_BACKGROUNDS, IMAGE_FORMATS, IMAGE_QUALITIES } from "../core/types.js";
 import type {
@@ -388,6 +389,12 @@ function cwdOf(deps: ToolDeps): string {
  * relative paths against `process.cwd()`, which is the shell the user typed in; an
  * MCP server has no such shell, and resolving twice is harmless because the second
  * resolve is handed an absolute path.
+ *
+ * They are also CONFINED to it. A shell path is typed by the person who owns the
+ * shell; these are composed by a model from whatever is in its context — a web page,
+ * an issue body, a file it was asked to summarise. `../../.ssh/config` was a
+ * perfectly good out_dir, and `out` names a file the run then writes. The same rule
+ * assets.yml has applied all along, for the same reason.
  */
 function sharedOptionsFrom(args: Record<string, unknown>, cwd: string): SharedCliOptions {
   const out = args.out as string | undefined;
@@ -401,8 +408,8 @@ function sharedOptionsFrom(args: Record<string, unknown>, cwd: string): SharedCl
     exactSize: args.exact_size as string | undefined,
     model: args.model as string | undefined,
     style: args.style as string | undefined,
-    out: out === undefined ? undefined : resolve(cwd, out),
-    outDir: outDir === undefined ? undefined : resolve(cwd, outDir),
+    out: out === undefined ? undefined : within(cwd, out, "out"),
+    outDir: outDir === undefined ? undefined : within(cwd, outDir, "out_dir"),
     backend: args.backend as string | undefined,
     transparent: args.transparent as boolean | undefined,
     // The CLI takes "400,800" from a shell that has no arrays. The schema takes the
@@ -455,13 +462,19 @@ export const HANDLERS: Record<string, Handler> = {
       prompt: args.prompt as string,
       outputPath: options.out,
       referenceImages: (args.reference_images as string[] | undefined)?.map((path) =>
-        resolve(cwd, path),
+        within(cwd, path, "reference_images"),
       ),
       ...resolveSharedFields(options, style, config),
     })),
   edit_image: async (args, deps) =>
     runImageTool(args, deps, (options, style, config, cwd) =>
-      buildEditRequest(resolve(cwd, args.image as string), args.instruction as string, options, style, config),
+      buildEditRequest(
+        within(cwd, args.image as string, "image"),
+        args.instruction as string,
+        options,
+        style,
+        config,
+      ),
     ),
   sync_assets: async (args, deps) => {
     const cwd = cwdOf(deps);
@@ -473,7 +486,10 @@ export const HANDLERS: Record<string, Handler> = {
 
     // Warnings from the manifest loader go nowhere on purpose. The only two streams
     // here are the transport and stderr, and a host shows neither to the model.
-    const loaded = await loadAssets(resolve(cwd, (args.file as string | undefined) ?? ASSETS_FILENAME), () => {});
+    const loaded = await loadAssets(
+      within(cwd, (args.file as string | undefined) ?? ASSETS_FILENAME, "file"),
+      () => {},
+    );
 
     // `checkAssets` and not `syncAssets({check})`: the zero-quota guarantee is that
     // this path is handed no provider and no generation dependencies at all, rather

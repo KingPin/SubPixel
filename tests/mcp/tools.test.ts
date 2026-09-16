@@ -228,6 +228,29 @@ describe("sync_assets", () => {
   });
 });
 
+describe("path containment", () => {
+  // Every one of these is a path a MODEL composed, from whatever was in its context
+  // — a web page, an issue body, a file it was asked to summarise. A shell path is
+  // typed by the person who owns the shell; these are not, and `out` names a file
+  // the run then writes.
+  it.each([
+    ["generate_image", { prompt: "a fox", out: "../escaped.png" }],
+    ["generate_image", { prompt: "a fox", out_dir: "../.." }],
+    ["generate_image", { prompt: "a fox", reference_images: ["/etc/hosts"] }],
+    ["edit_image", { image: "../../.ssh/id_rsa", instruction: "make it blue" }],
+    ["sync_assets", { check: true, file: "../assets.yml" }],
+  ])("refuses %s with a path outside the project", async (tool, args) => {
+    await expect(callTool(tool, args, { cwd: dir })).rejects.toThrow(/resolves outside/);
+  });
+
+  it("still accepts a path inside the project", async () => {
+    await writeFile(join(dir, "assets.yml"), "assets:\n  - id: hero\n    prompt: a dashboard\n");
+    await expect(
+      callTool("sync_assets", { check: true, file: "assets.yml" }, { cwd: dir }),
+    ).resolves.toMatchObject({ drift: true });
+  });
+});
+
 describe("the tool dispatcher", () => {
   it("names the tools it has when asked for one it does not", async () => {
     await expect(callTool("draw_me_a_sheep", {})).rejects.toThrow(/Unknown tool/);

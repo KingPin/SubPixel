@@ -30,6 +30,14 @@ Worth knowing before you report, and worth knowing if you are just reading the c
 - **The filesystem.** Images, manifests, and the config files `spx init` writes. Those
   writes merge rather than replace, so a path traversal or an unexpected overwrite in
   `spx init`, `spx sync`, or `spx icons` is in scope.
+- **Paths from an agent.** Every path an MCP tool call supplies — `out`, `out_dir`,
+  `reference_images`, `image`, and the `assets.yml` a sync reads — is confined to the
+  project directory the server was started in, symlinks resolved. `assets.yml` has
+  always been held to the same rule. The reason is the same in both cases and it is
+  not the same as for a shell: a path typed at a shell is typed by the person who owns
+  it, while these are composed by a model out of whatever reached its context. A path
+  that escapes the project directory is in scope. A path the user typed at a shell is
+  not — `spx generate --out /tmp/x.png` is the tool doing what it was told.
 
 ## Out of scope
 

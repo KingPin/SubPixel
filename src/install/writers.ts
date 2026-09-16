@@ -17,6 +17,13 @@ export interface InitContext {
   xdgConfigHome?: string;
   /** The text of the bundled `skills/subpixel/SKILL.md`, read once by `init.ts`. */
   skill: string;
+  /**
+   * The file this writer is about to render, resolved by `init.ts`.
+   *
+   * Writers use it to name themselves in an error. They cannot derive it, because
+   * `--global` sends the same writer to a different file than `path()` returns.
+   */
+  dest: string;
 }
 
 /**
@@ -51,6 +58,20 @@ export interface Writer {
    * filesystem is `init.ts`'s job.
    */
   marker?(ctx: InitContext): string;
+  /**
+   * Where `--global` writes this target, and the directory that proves the harness
+   * is installed.
+   *
+   * Only for a project-scoped writer whose harness ALSO documents a user-scoped
+   * config. Absent means the harness has no user-scoped form, and `--global` reports
+   * the target as unsupported rather than quietly writing the project file — a
+   * global run that silently edits the working directory is the one outcome the flag
+   * must never produce.
+   *
+   * A user-scoped writer needs none of this: it is already global, and `--global`
+   * leaves it exactly where it was.
+   */
+  globalTarget?(ctx: InitContext): { path: string; marker: string };
   /**
    * Merge our entry into `existing` and return the whole file.
    *
@@ -160,6 +181,12 @@ export const WRITERS: Writer[] = [
     title: "Claude Code skill",
     scope: "project",
     path: (ctx) => join(ctx.cwd, ".claude", "skills", "subpixel", "SKILL.md"),
+    // A user skill is the same file under ~/.claude, and Claude Code reads it in
+    // every project.
+    globalTarget: (ctx) => ({
+      path: join(ctx.home, ".claude", "skills", "subpixel", "SKILL.md"),
+      marker: join(ctx.home, ".claude"),
+    }),
     // The whole directory is ours, so the bundled text is written wholesale rather
     // than merged. Idempotent by construction, and an upgrade replaces a stale copy.
     write: (_existing, ctx) => ctx.skill,
@@ -174,8 +201,15 @@ export const WRITERS: Writer[] = [
     title: "Claude Code MCP server",
     scope: "project",
     path: (ctx) => join(ctx.cwd, ".mcp.json"),
-    write: (existing) =>
-      mergeServerEntry(existing, ".mcp.json", "mcpServers", {
+    // ~/.claude.json is where `claude mcp add --scope user` puts a server, under the
+    // same `mcpServers` key. It also holds Claude Code's own session state, which the
+    // merge preserves — every key we did not write is spread back out untouched.
+    globalTarget: (ctx) => ({
+      path: join(ctx.home, ".claude.json"),
+      marker: join(ctx.home, ".claude"),
+    }),
+    write: (existing, ctx) =>
+      mergeServerEntry(existing, ctx.dest, "mcpServers", {
         command: MCP_COMMAND,
         args: MCP_ARGS,
       }),
@@ -191,8 +225,12 @@ export const WRITERS: Writer[] = [
     title: "Cursor MCP server",
     scope: "project",
     path: (ctx) => join(ctx.cwd, ".cursor", "mcp.json"),
-    write: (existing) =>
-      mergeServerEntry(existing, ".cursor/mcp.json", "mcpServers", {
+    globalTarget: (ctx) => ({
+      path: join(ctx.home, ".cursor", "mcp.json"),
+      marker: join(ctx.home, ".cursor"),
+    }),
+    write: (existing, ctx) =>
+      mergeServerEntry(existing, ctx.dest, "mcpServers", {
         type: "stdio",
         command: MCP_COMMAND,
         args: MCP_ARGS,
@@ -208,8 +246,8 @@ export const WRITERS: Writer[] = [
     title: "Windsurf MCP server",
     scope: "user",
     path: (ctx) => join(ctx.home, ".codeium", "windsurf", "mcp_config.json"),
-    write: (existing) =>
-      mergeServerEntry(existing, "mcp_config.json", "mcpServers", {
+    write: (existing, ctx) =>
+      mergeServerEntry(existing, ctx.dest, "mcpServers", {
         command: MCP_COMMAND,
         args: MCP_ARGS,
       }),
@@ -226,8 +264,8 @@ export const WRITERS: Writer[] = [
     title: "Cline MCP server",
     scope: "user",
     path: (ctx) => join(ctx.home, ".cline", "data", "settings", "cline_mcp_settings.json"),
-    write: (existing) =>
-      mergeServerEntry(existing, "cline_mcp_settings.json", "mcpServers", {
+    write: (existing, ctx) =>
+      mergeServerEntry(existing, ctx.dest, "mcpServers", {
         command: MCP_COMMAND,
         args: MCP_ARGS,
         disabled: false,
@@ -250,8 +288,8 @@ export const WRITERS: Writer[] = [
     title: "Kilo Code MCP server",
     scope: "user",
     path: (ctx) => join(ctx.xdgConfigHome ?? join(ctx.home, ".config"), "kilo", "kilo.jsonc"),
-    write: (existing) =>
-      mergeServerEntry(existing, "kilo.jsonc", "mcp", {
+    write: (existing, ctx) =>
+      mergeServerEntry(existing, ctx.dest, "mcp", {
         type: "local",
         command: [MCP_COMMAND, ...MCP_ARGS],
         enabled: true,

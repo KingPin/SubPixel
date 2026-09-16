@@ -3,6 +3,7 @@ import { applyInit, formatInitPlan, planInit } from "../install/init.js";
 export interface InitCliOptions {
   dryRun?: boolean;
   force?: boolean;
+  global?: boolean;
   only?: string;
 }
 
@@ -15,7 +16,11 @@ function parseOnly(only: string | undefined): string[] {
 }
 
 export async function runInit(options: InitCliOptions = {}): Promise<void> {
-  const plan = await planInit({ force: options.force, only: parseOnly(options.only) });
+  const plan = await planInit({
+    force: options.force,
+    global: options.global,
+    only: parseOnly(options.only),
+  });
   if (!options.dryRun) await applyInit(plan);
   process.stdout.write(`${formatInitPlan(plan, options.dryRun === true)}\n`);
   // A conflict is the one outcome that needs the user to do something, so it is the

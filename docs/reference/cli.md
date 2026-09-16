@@ -152,6 +152,7 @@ spx init              # write the skill and MCP config for the harnesses on this
 spx init --dry-run    # print every file that would be written, and write nothing
 spx init --force      # replace a config file that could not be parsed
 spx init --only cursor,kilo    # write those two targets and nothing else
+spx init --global     # configure every harness on this machine, for every project
 ```
 
 | Flag | Meaning |
@@ -159,6 +160,7 @@ spx init --only cursor,kilo    # write those two targets and nothing else
 | `--dry-run` | Render every file that would be written. Writes nothing. |
 | `--force` | Replace a config file that could not be parsed, instead of skipping it. |
 | `--only <targets>` | Comma-separated target ids, in place of every target. An unknown id is an error. |
+| `--global` | Write each harness its user-scoped config, so every project gets subpixel. |
 
 `init` writes each harness the file it actually reads:
 
@@ -174,6 +176,22 @@ spx init --only cursor,kilo    # write those two targets and nothing else
 
 Every run prints the id beside each target, so `--only` never needs this table.
 
+`--global` moves the project-scoped targets to the file the same harness reads in
+every project:
+
+| Target id | `--global` destination |
+| --- | --- |
+| `claude-skill` | `~/.claude/skills/subpixel/SKILL.md` |
+| `claude-mcp` | `~/.claude.json` — the same file `claude mcp add --scope user` writes |
+| `cursor` | `~/.cursor/mcp.json` |
+| `agents-md` | none. Reported as "project only": it is a file in a repository and nothing else. |
+
+`windsurf`, `cline`, and `kilo` are user-scoped already, so `--global` leaves them
+where they are. Under `--global`, Claude Code is detected like every other harness:
+without a `~/.claude` directory it is reported as "not installed" and nothing is
+written. Combine the two flags to configure one harness everywhere —
+`spx init --global --only cursor`.
+
 A harness whose config directory does not exist is skipped and reported as "not
 installed". The three project-scoped files with no directory to detect — the skill,
 `.mcp.json`, and `AGENTS.md` — are always written.
@@ -183,9 +201,9 @@ second run produces a byte-identical file, and a file that cannot be parsed is
 reported as a conflict and left alone. A run with any conflict exits 2.
 
 **A user-scoped entry is not project-scoped.** Windsurf, Cline, and Kilo Code keep one
-MCP config for every project, so the entry `init` writes applies everywhere, and the
-server reads whichever `subpixel.config.*` and `assets.yml` sit in the directory the
-host happens to run from.
+MCP config for every project — and so does everything `--global` writes — so the entry
+`init` writes applies everywhere, and the server reads whichever `subpixel.config.*`
+and `assets.yml` sit in the directory the host happens to run from.
 
 ## mcp
 

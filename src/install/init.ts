@@ -9,11 +9,19 @@ import { WRITERS, type InitContext, type Scope, type Writer } from "./writers.js
 /**
  * What `init` decided about one target.
  *
- * `absent` and `conflict` are both "nothing was written", but they are different
- * answers and a user acts on them differently: `absent` means the harness is not
- * installed, `conflict` means it is and we refused to guess at its config.
+ * `absent`, `conflict`, and `unsupported` are all "nothing was written", but they
+ * are different answers and a user acts on them differently: `absent` means the
+ * harness is not installed, `conflict` means it is and we refused to guess at its
+ * config, and `unsupported` means `--global` was asked for a target that only exists
+ * inside a project.
  */
-export type TargetState = "created" | "updated" | "unchanged" | "absent" | "conflict";
+export type TargetState =
+  | "created"
+  | "updated"
+  | "unchanged"
+  | "absent"
+  | "conflict"
+  | "unsupported";
 
 export interface TargetPlan {
   id: string;
@@ -21,9 +29,9 @@ export interface TargetPlan {
   scope: Scope;
   path: string;
   state: TargetState;
-  /** The file exactly as it would be written. Absent for `absent` and `conflict`. */
+  /** The file exactly as it would be written. Absent when nothing would be. */
   content?: string;
-  /** Why nothing was written. Present for `absent` and `conflict`. */
+  /** Why nothing was written. Present for `absent`, `conflict`, and `unsupported`. */
   reason?: string;
 }
 
@@ -37,6 +45,14 @@ export interface InitOptions {
   skill?: string;
   /** Writer ids to plan, in place of every writer. Absent or empty means all of them. */
   only?: string[];
+  /**
+   * Write each harness its user-scoped config, so every project gets subpixel.
+   *
+   * It only moves the targets that HAVE a user-scoped form. The ones already user
+   * scoped do not move, and `AGENTS.md` — which is a file in a repository and
+   * nothing else — is reported as unsupported.
+   */
+  global?: boolean;
 }
 
 /**
@@ -74,10 +90,32 @@ export async function bundledSkill(): Promise<string> {
   return readFile(join(here, "..", "..", "skills", "subpixel", "SKILL.md"), "utf8");
 }
 
-async function planTarget(writer: Writer, ctx: InitContext, force: boolean): Promise<TargetPlan> {
-  const base = { id: writer.id, title: writer.title, scope: writer.scope, path: writer.path(ctx) };
+async function planTarget(
+  writer: Writer,
+  ctx: InitContext,
+  options: { force: boolean; global: boolean },
+): Promise<TargetPlan> {
+  // A user-scoped writer is already global, so `--global` only redirects the
+  // project-scoped ones.
+  const global = options.global && writer.scope === "project";
+  const target = global ? writer.globalTarget?.(ctx) : undefined;
+  const base = {
+    id: writer.id,
+    title: writer.title,
+    scope: global ? ("user" as const) : writer.scope,
+    path: target?.path ?? writer.path(ctx),
+  };
 
-  const marker = writer.marker?.(ctx);
+  if (global && target === undefined) {
+    return {
+      ...base,
+      scope: writer.scope,
+      state: "unsupported",
+      reason: "this target only exists inside a project; run without --global",
+    };
+  }
+
+  const marker = target?.marker ?? writer.marker?.(ctx);
   if (marker !== undefined && !(await pathExists(marker))) {
     return { ...base, state: "absent", reason: `${marker} does not exist` };
   }
@@ -86,10 +124,11 @@ async function planTarget(writer: Writer, ctx: InitContext, force: boolean): Pro
   // unreadable file from a missing one here is to report it, and the write that
   // follows will report it far more precisely than a guess at this point could.
   const existing = await readFile(base.path, "utf8").catch(() => undefined);
+  const writeCtx: InitContext = { ...ctx, dest: base.path };
 
   let content: string;
   try {
-    content = writer.write(existing, ctx);
+    content = writer.write(existing, writeCtx);
   } catch (err) {
     if (!(err instanceof SubpixelError)) throw err;
     // --force is expressed as "there is nothing there", which is the whole of what
@@ -100,8 +139,8 @@ async function planTarget(writer: Writer, ctx: InitContext, force: boolean): Pro
     // attempt made `--force` mean "rewrite every target from scratch", which drops
     // unrelated servers from a perfectly parseable `.mcp.json` and replaces hand
     // written `AGENTS.md` prose — neither of which the flag promises.
-    if (!force) return { ...base, state: "conflict", reason: err.message };
-    content = writer.write(undefined, ctx);
+    if (!options.force) return { ...base, state: "conflict", reason: err.message };
+    content = writer.write(undefined, writeCtx);
   }
 
   if (content === existing) return { ...base, state: "unchanged", content };
@@ -115,11 +154,12 @@ export async function planInit(options: InitOptions = {}): Promise<TargetPlan[]>
     cwd: options.cwd ?? process.cwd(),
     home: options.home ?? homedir(),
     skill: options.skill ?? (await bundledSkill()),
+    // Replaced per target by `planTarget`; a writer never renders against this one.
+    dest: "",
     ...(env.XDG_CONFIG_HOME ? { xdgConfigHome: env.XDG_CONFIG_HOME } : {}),
   };
-  return Promise.all(
-    selectWriters(options.only).map((writer) => planTarget(writer, ctx, options.force === true)),
-  );
+  const flags = { force: options.force === true, global: options.global === true };
+  return Promise.all(selectWriters(options.only).map((writer) => planTarget(writer, ctx, flags)));
 }
 
 /** Write the targets that need writing. Returns the ones that were written. */
@@ -139,6 +179,7 @@ const VERBS: Record<TargetState, string> = {
   unchanged: "already current",
   absent: "not installed",
   conflict: "CONFLICT",
+  unsupported: "project only",
 };
 
 /**
@@ -190,5 +231,8 @@ export function formatInitPlan(plan: TargetPlan[], dryRun: boolean): string {
 
 /** True when every target that could be configured already is. Used by `spx doctor`. */
 export function initIsCurrent(plan: TargetPlan[]): boolean {
-  return plan.every((target) => target.state === "unchanged" || target.state === "absent");
+  return plan.every(
+    (target) =>
+      target.state === "unchanged" || target.state === "absent" || target.state === "unsupported",
+  );
 }

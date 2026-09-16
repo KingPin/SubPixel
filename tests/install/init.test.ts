@@ -69,6 +69,35 @@ describe("planInit", () => {
     await expect(planInit({ cwd, home, env, only: ["cursed"] })).rejects.toThrow(/cursed/);
   });
 
+  it("sends a project target to its user-scoped file under --global", async () => {
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await mkdir(join(home, ".cursor"), { recursive: true });
+    const targets = await planInit({ cwd, home, env, global: true });
+    const path = Object.fromEntries(targets.map((t) => [t.id, t.path]));
+    expect(path["claude-skill"]).toBe(join(home, ".claude", "skills", "subpixel", "SKILL.md"));
+    expect(path["claude-mcp"]).toBe(join(home, ".claude.json"));
+    expect(path["cursor"]).toBe(join(home, ".cursor", "mcp.json"));
+    // Already user scoped, so --global leaves it where it was.
+    expect(path["kilo"]).toBe(join(home, ".config", "kilo", "kilo.jsonc"));
+    expect(targets.every((t) => t.state !== "created" || t.scope === "user")).toBe(true);
+  });
+
+  it("detects the harness before writing a global config for it", async () => {
+    // Without ~/.claude, a global run must not create one: the project-scoped skill
+    // and .mcp.json are written unconditionally only because they cost a project
+    // nothing, and a stray directory in $HOME is not the same bargain.
+    const targets = await planInit({ cwd, home, env, global: true });
+    const state = Object.fromEntries(targets.map((t) => [t.id, t.state]));
+    expect(state).toMatchObject({ "claude-skill": "absent", "claude-mcp": "absent" });
+  });
+
+  it("reports a project-only target as unsupported instead of writing it", async () => {
+    const targets = await planInit({ cwd, home, env, global: true, only: ["agents-md"] });
+    expect(targets[0]!.state).toBe("unsupported");
+    await applyInit(targets);
+    expect(await tree(cwd)).toEqual([]);
+  });
+
   it("writes nothing", async () => {
     await plan();
     expect(await tree(cwd)).toEqual([]);
@@ -98,6 +127,33 @@ describe("applyInit", () => {
   it("writes only what --only planned", async () => {
     await applyInit(await planInit({ cwd, home, env, only: ["claude-mcp"] }));
     expect(await tree(cwd)).toEqual([join(cwd, ".mcp.json")]);
+  });
+
+  it("keeps the rest of ~/.claude.json when it adds the server", async () => {
+    // That file is Claude Code's own state, not a config we own. Merging it wrong
+    // costs the user their session history.
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({ numStartups: 7, mcpServers: { other: { command: "other-server" } } }),
+    );
+
+    await applyInit(await planInit({ cwd, home, env, global: true, only: ["claude-mcp"] }));
+
+    const doc = JSON.parse(await readFile(join(home, ".claude.json"), "utf8")) as {
+      numStartups: number;
+      mcpServers: Record<string, unknown>;
+    };
+    expect(doc.numStartups).toBe(7);
+    expect(Object.keys(doc.mcpServers).sort()).toEqual(["other", "subpixel"]);
+  });
+
+  it("names the file it actually failed to parse", async () => {
+    await mkdir(join(home, ".claude"), { recursive: true });
+    await writeFile(join(home, ".claude.json"), "{ this is not json\n");
+    const [target] = await planInit({ cwd, home, env, global: true, only: ["claude-mcp"] });
+    expect(target!.state).toBe("conflict");
+    expect(target!.reason).toContain(join(home, ".claude.json"));
   });
 
   it("keeps an MCP server someone else configured", async () => {

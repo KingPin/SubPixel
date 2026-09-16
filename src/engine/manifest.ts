@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { atomicWrite } from "../core/fsx.js";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
+import { atomicPublish, atomicWrite } from "../core/fsx.js";
+import { OutputError } from "../core/errors.js";
 import { redact } from "../core/redact.js";
 import {
   BACKEND_NAMES,
@@ -95,7 +96,9 @@ export function manifestPathFor(imagePath: string): string {
  * part of the destination, so it is checked while the destination is still being
  * chosen.
  */
-export async function sidecarIsOursToWrite(imagePath: string): Promise<boolean> {
+export async function sidecarIsOursToWrite(
+  imagePath: string,
+): Promise<boolean> {
   let raw: string;
   try {
     raw = await readFile(manifestPathFor(imagePath), "utf8");
@@ -139,16 +142,49 @@ function fromSidecarRelative(imagePath: string, path: string): string {
  * the serialised form redacts every field there will ever be, and the mask contains
  * no quote or backslash, so the document stays parseable.
  */
-export async function writeManifest(imagePath: string, entry: ManifestEntry): Promise<void> {
+export async function writeManifest(
+  imagePath: string,
+  entry: ManifestEntry,
+  options: { overwrite?: boolean } = {},
+): Promise<void> {
   const record: ManifestEntry = {
     manifestVersion: MANIFEST_VERSION,
     ...entry,
     ...(entry.referenceImages
-      ? { referenceImages: entry.referenceImages.map((p) => toSidecarRelative(imagePath, p)) }
+      ? {
+          referenceImages: entry.referenceImages.map((p) =>
+            toSidecarRelative(imagePath, p),
+          ),
+        }
       : {}),
     generatedAt: entry.generatedAt ?? new Date().toISOString(),
   };
-  await atomicWrite(manifestPathFor(imagePath), redact(`${JSON.stringify(record, null, 2)}\n`));
+  const target = manifestPathFor(imagePath);
+  const document = redact(`${JSON.stringify(record, null, 2)}\n`);
+
+  if (options.overwrite) {
+    await atomicWrite(target, document);
+    return;
+  }
+
+  // Claimed with link()/EEXIST, the same way the image beside it is claimed.
+  // `sidecarIsOursToWrite` runs while the destination is being CHOSEN, which leaves
+  // the whole generation between the look and the write; a plain rename here hands
+  // that window to anything else writing into the directory. Publishing
+  // conditionally means the only file this can replace is one it has just read and
+  // recognised as ours.
+  if (await atomicPublish(target, document, { overwrite: false })) return;
+
+  if (await sidecarIsOursToWrite(imagePath)) {
+    await atomicWrite(target, document);
+    return;
+  }
+
+  throw new OutputError(
+    `${basename(target)} appeared beside the image during this run and is not a subpixel ` +
+      "manifest, so it was left alone. The image was written; re-run with --overwrite to " +
+      "replace the sidecar.",
+  );
 }
 
 const FORMATS: readonly string[] = IMAGE_FORMATS;
@@ -166,10 +202,14 @@ function optional(value: unknown, ok: (v: unknown) => boolean): boolean {
 }
 
 const isString = (v: unknown): boolean => typeof v === "string";
-const isNumber = (v: unknown): boolean => typeof v === "number" && Number.isFinite(v);
-const isWidth = (v: unknown): boolean => typeof v === "number" && Number.isInteger(v) && v >= 1;
-const isStringArray = (v: unknown): boolean => Array.isArray(v) && v.every(isString);
-const isNumberArray = (v: unknown): boolean => Array.isArray(v) && v.every(isNumber);
+const isNumber = (v: unknown): boolean =>
+  typeof v === "number" && Number.isFinite(v);
+const isWidth = (v: unknown): boolean =>
+  typeof v === "number" && Number.isInteger(v) && v >= 1;
+const isStringArray = (v: unknown): boolean =>
+  Array.isArray(v) && v.every(isString);
+const isNumberArray = (v: unknown): boolean =>
+  Array.isArray(v) && v.every(isNumber);
 const oneOf =
   (values: readonly string[]) =>
   (v: unknown): boolean =>
@@ -190,7 +230,10 @@ function isVariantSpecArray(value: unknown): boolean {
       (v) =>
         isRecord(v) &&
         isWidth(v.width) &&
-        optional(v.suffix, (s) => isString(s) && isSafeVariantSuffix(s as string)),
+        optional(
+          v.suffix,
+          (s) => isString(s) && isSafeVariantSuffix(s as string),
+        ),
     )
   );
 }
@@ -269,7 +312,9 @@ export function isManifestEntry(value: unknown): value is ManifestEntry {
  * Reference paths come back ABSOLUTE, resolved against the sidecar's own directory,
  * so a caller can replay them from any working directory.
  */
-export async function readManifest(imagePath: string): Promise<ManifestEntry | undefined> {
+export async function readManifest(
+  imagePath: string,
+): Promise<ManifestEntry | undefined> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(await readFile(manifestPathFor(imagePath), "utf8"));
@@ -280,6 +325,8 @@ export async function readManifest(imagePath: string): Promise<ManifestEntry | u
   if (!parsed.referenceImages) return parsed;
   return {
     ...parsed,
-    referenceImages: parsed.referenceImages.map((p) => fromSidecarRelative(imagePath, p)),
+    referenceImages: parsed.referenceImages.map((p) =>
+      fromSidecarRelative(imagePath, p),
+    ),
   };
 }

@@ -1,8 +1,9 @@
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { cacheKey } from "../engine/cache.js";
 import { readManifest, type ManifestEntry } from "../engine/manifest.js";
 import { referenceDigest } from "../engine/references.js";
+import { sha256 } from "../engine/output.js";
 import { variantPath } from "../engine/variants.js";
 import { redact } from "../core/redact.js";
 import type { ResolvedAsset } from "./load.js";
@@ -31,6 +32,8 @@ export interface AssetProbe {
   readManifest(path: string): Promise<ManifestEntry | undefined>;
   /** sha256 of each reference image's CONTENTS, in order. */
   referenceHashes(paths: string[] | undefined): Promise<string[]>;
+  /** sha256 of a written artifact, or `undefined` when it cannot be read. */
+  digest(path: string): Promise<string | undefined>;
 }
 
 export const diskProbe: AssetProbe = {
@@ -43,6 +46,13 @@ export const diskProbe: AssetProbe = {
     }
   },
   readManifest,
+  digest: async (path) => {
+    try {
+      return sha256(await readFile(path));
+    } catch {
+      return undefined;
+    }
+  },
   // Sequential, like `loadReferences`: short lists, and a deterministic first
   // failure is what an error message needs.
   referenceHashes: async (paths) => {
@@ -52,7 +62,29 @@ export const diskProbe: AssetProbe = {
   },
 };
 
-async function statusFor(asset: ResolvedAsset, probe: AssetProbe): Promise<AssetStatus> {
+export interface PlanOptions {
+  /**
+   * Also read every artifact back and compare it to the sha256 in its own sidecar.
+   *
+   * OFF for a sync, ON for a check, and the asymmetry is the point. A key match
+   * says "the inputs are unchanged since this was generated". It says nothing about
+   * the file, which can be truncated by a half-finished copy, mangled by an
+   * optimiser run over the assets directory, or replaced wholesale — and the
+   * manifest beside it still matches, so every `--check` passes.
+   *
+   * A sync does not do it because a sync is about to consult the cache and write
+   * whatever it finds anyway, and reading every artifact twice buys nothing there.
+   * A check is the run whose entire output is the word "current", so it is the run
+   * that has to have looked.
+   */
+  verify?: boolean;
+}
+
+async function statusFor(
+  asset: ResolvedAsset,
+  probe: AssetProbe,
+  options: PlanOptions,
+): Promise<AssetStatus> {
   const hashes = await probe.referenceHashes(asset.request.referenceImages);
   const key = cacheKey({ ...asset.request, referenceHashes: hashes });
   const base = { id: asset.id, out: asset.out, key };
@@ -71,6 +103,19 @@ async function statusFor(asset: ResolvedAsset, probe: AssetProbe): Promise<Asset
 
   if (manifest.cacheKey !== key) {
     return { ...base, state: "stale", reason: redact(`${asset.id}: prompt or settings changed`) };
+  }
+
+  if (options.verify && manifest.sha256) {
+    const digest = await probe.digest(asset.out);
+    if (digest !== manifest.sha256) {
+      return {
+        ...base,
+        state: "stale",
+        reason: redact(
+          `${basename(asset.out)} does not match the sha256 its own manifest records`,
+        ),
+      };
+    }
   }
 
   for (const variant of asset.variants) {
@@ -94,11 +139,12 @@ async function statusFor(asset: ResolvedAsset, probe: AssetProbe): Promise<Asset
 export async function planAssets(
   assets: readonly ResolvedAsset[],
   probe: AssetProbe = diskProbe,
+  options: PlanOptions = {},
 ): Promise<AssetStatus[]> {
   // Sequential on purpose. These are local stat calls, the lists are short, and a
   // deterministic order makes the drift report diffable between CI runs.
   const statuses: AssetStatus[] = [];
-  for (const asset of assets) statuses.push(await statusFor(asset, probe));
+  for (const asset of assets) statuses.push(await statusFor(asset, probe, options));
   return statuses;
 }
 

@@ -32,11 +32,15 @@ function probeOver(
   files: Set<string>,
   manifests: Map<string, ManifestEntry>,
   hashes: Record<string, string> = {},
+  digests: Record<string, string> = {},
 ): AssetProbe {
   return {
     exists: async (path) => files.has(path),
     readManifest: async (path) => manifests.get(path),
     referenceHashes: async (paths) => (paths ?? []).map((path) => hashes[path] ?? "missing"),
+    // Defaults to what the manifest claims, so only a test that sets this out of
+    // step with the manifest is testing the verification.
+    digest: async (path) => digests[path] ?? manifests.get(path)?.sha256,
   };
 }
 
@@ -124,5 +128,40 @@ describe("hasDrift", () => {
     expect(hasDrift([{ id: "a", out: "/a", state: "stale", reason: "", key: "k" }])).toBe(true);
     expect(hasDrift([{ id: "a", out: "/a", state: "missing", reason: "", key: "k" }])).toBe(true);
     expect(hasDrift([])).toBe(false);
+  });
+});
+
+describe("planAssets with verify", () => {
+  // A key match says the INPUTS are unchanged. It says nothing about the file,
+  // which a half-finished copy can truncate and an image optimiser can rewrite,
+  // leaving a manifest that still matches and a check that passes forever.
+  it("catches a file that no longer matches its own manifest", async () => {
+    const a = asset();
+    const probe = probeOver(
+      new Set([a.out]),
+      new Map([[a.out, manifestFor(a)]]),
+      {},
+      { [a.out]: "something else entirely" },
+    );
+
+    expect((await planAssets([a], probe))[0]!.state).toBe("current");
+    const verified = await planAssets([a], probe, { verify: true });
+    expect(verified[0]!.state).toBe("stale");
+    expect(verified[0]!.reason).toMatch(/sha256/);
+  });
+
+  it("stays current when the bytes do match", async () => {
+    const a = asset();
+    const probe = probeOver(new Set([a.out]), new Map([[a.out, manifestFor(a)]]));
+    expect((await planAssets([a], probe, { verify: true }))[0]!.state).toBe("current");
+  });
+
+  it("does not call for a digest when it is not verifying", async () => {
+    const a = asset();
+    const probe = probeOver(new Set([a.out]), new Map([[a.out, manifestFor(a)]]));
+    probe.digest = async () => {
+      throw new Error("a sync must not read every artifact back");
+    };
+    expect((await planAssets([a], probe))[0]!.state).toBe("current");
   });
 });

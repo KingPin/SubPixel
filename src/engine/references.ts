@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { ConfigError } from "../core/errors.js";
 import type { ImageFormat, LoadedReference } from "../core/types.js";
@@ -57,10 +57,44 @@ export async function readImageFile(path: string): Promise<{ data: Buffer; forma
   return { data, format };
 }
 
-export async function loadReference(path: string): Promise<LoadedReference> {
+/**
+ * Load one reference, refusing anything over the cap BEFORE it is in memory.
+ *
+ * The size comes from stat, not from the buffer. Reading first and measuring after
+ * means the 3 GiB file the user pointed at by mistake is resident in this process
+ * before anything objects to it, and the objection is then an allocation failure
+ * rather than the message below.
+ *
+ * `budget` is what is left of the whole-request cap. Same reason: the tenth
+ * reference should be refused before it is read, not after.
+ *
+ * ponytail: a stat is a check, not a lock. A file that grows between the stat and
+ * the read is still read whole; the cap that matters for the transport is applied
+ * to the bytes in hand below.
+ */
+export async function loadReference(
+  path: string,
+  budget: number = MAX_REFERENCE_TOTAL_BYTES,
+): Promise<LoadedReference> {
+  const cap = Math.min(MAX_REFERENCE_BYTES, budget);
+  let declared: number | undefined;
+  try {
+    declared = (await stat(path)).size;
+  } catch {
+    // Unreadable, missing, or not a file. `readImageFile` reports it properly.
+  }
+  if (declared !== undefined && declared > cap) {
+    throw new ConfigError(
+      declared > MAX_REFERENCE_BYTES
+        ? `Reference image "${path}" is too large: ${mib(declared)}, cap ${mib(MAX_REFERENCE_BYTES)}.`
+        : `Reference images are too large combined: "${path}" is ${mib(declared)} and only ` +
+            `${mib(budget)} of the ${mib(MAX_REFERENCE_TOTAL_BYTES)} cap is left.`,
+    );
+  }
+
   const { data, format } = await readImageFile(path);
 
-  if (data.length > MAX_REFERENCE_BYTES) {
+  if (data.length > cap) {
     throw new ConfigError(
       `Reference image "${path}" is too large: ${mib(data.length)}, cap ${mib(MAX_REFERENCE_BYTES)}.`,
     );
@@ -82,14 +116,21 @@ export async function loadReferences(paths: string[] | undefined): Promise<Loade
   // reading them in parallel would only make the first failure non-deterministic,
   // which is the opposite of what an error message needs.
   const loaded: LoadedReference[] = [];
-  for (const path of paths) loaded.push(await loadReference(path));
-
-  const total = loaded.reduce((sum, reference) => sum + reference.bytes, 0);
-  if (total > MAX_REFERENCE_TOTAL_BYTES) {
-    throw new ConfigError(
-      `Reference images are too large combined: ${mib(total)} across ${loaded.length} files, ` +
-        `cap ${mib(MAX_REFERENCE_TOTAL_BYTES)}.`,
-    );
+  let total = 0;
+  for (const path of paths) {
+    // The running total goes in, so the file that breaks the budget is refused at
+    // its own stat rather than after every remaining file has been read and
+    // base64-encoded. Ten 4 MiB references used to mean 40 MiB resident before the
+    // 32 MiB cap was consulted.
+    const reference = await loadReference(path, MAX_REFERENCE_TOTAL_BYTES - total);
+    total += reference.bytes;
+    if (total > MAX_REFERENCE_TOTAL_BYTES) {
+      throw new ConfigError(
+        `Reference images are too large combined: ${mib(total)} across ${loaded.length + 1} files, ` +
+          `cap ${mib(MAX_REFERENCE_TOTAL_BYTES)}.`,
+      );
+    }
+    loaded.push(reference);
   }
 
   return loaded;

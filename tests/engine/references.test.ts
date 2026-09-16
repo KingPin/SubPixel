@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, open, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -61,6 +61,20 @@ describe("loadReference", () => {
     const path = await tempFile("huge.png", big);
     await expect(loadReference(path)).rejects.toThrow(/too large/);
   });
+
+  it("refuses an oversized file without reading it", async () => {
+    // A SPARSE file: no PNG header anywhere in it, and no disk behind it either.
+    // If the size were measured from the buffer the loader would have to read a
+    // gigabyte to find out, and the complaint would be "not a PNG" — the wrong
+    // answer to the wrong question. The size check has to come off the stat.
+    const dir = await mkdtemp(join(tmpdir(), "subpixel-ref-"));
+    const path = join(dir, "sparse.png");
+    const handle = await open(path, "w");
+    await handle.truncate(1024 * 1024 * 1024);
+    await handle.close();
+
+    await expect(loadReference(path)).rejects.toThrow(/too large/);
+  });
 });
 
 describe("loadReferences", () => {
@@ -86,6 +100,15 @@ describe("loadReferences", () => {
       await tempFile("5.png", big),
     ];
     await expect(loadReferences(paths)).rejects.toThrow(/combined/);
+  });
+
+  it("names the file that broke the budget", async () => {
+    // The running total is what makes this possible. Summing at the end could only
+    // report a grand total, after every file had already been read and encoded.
+    const big = Buffer.concat([PNG, Buffer.alloc(MAX_REFERENCE_BYTES - PNG.length - 1)]);
+    const paths = [];
+    for (let i = 0; i < 6; i += 1) paths.push(await tempFile(`${i}.png`, big));
+    await expect(loadReferences(paths)).rejects.toThrow(/combined.*2\.png/s);
   });
 });
 

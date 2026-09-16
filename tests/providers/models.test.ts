@@ -209,3 +209,33 @@ describe("advancePast", () => {
     expect(advancePast(orderCandidates(LIVE_CACHE.models), "not-a-model")).toBeUndefined();
   });
 });
+
+/**
+ * The bundled list is the offline answer, so nothing else in the suite notices if a
+ * slug is dropped or the priorities drift away from the capture. Pin both against
+ * docs/reference/captures/2026-09-15-codex-models-endpoint.md.
+ */
+describe("BUNDLED_MODELS", () => {
+  it("matches the visible half of the captured catalogue", () => {
+    expect(BUNDLED_MODELS.map((m) => [m.slug, m.priority])).toEqual([
+      ["gpt-6-astra", 1],
+      ["gpt-5.6-sol", 4],
+      ["gpt-5.6-terra", 7],
+      ["gpt-5.6-luna", 8],
+      ["gpt-5.5", 12],
+    ]);
+  });
+
+  it("survives ordering unchanged, so the fallback order is the capture order", () => {
+    expect(orderCandidates(BUNDLED_MODELS).map((m) => m.slug)).toEqual(
+      BUNDLED_MODELS.map((m) => m.slug),
+    );
+  });
+
+  it("holds only listed models that support low effort", () => {
+    for (const m of BUNDLED_MODELS) {
+      expect(m.visibility).toBe("list");
+      expect(m.supported_reasoning_levels).toContainEqual({ effort: "low" });
+    }
+  });
+});

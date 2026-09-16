@@ -267,6 +267,28 @@ describe("applyInit", () => {
     expect(doc.mcpServers.subpixel).toBeDefined();
   });
 
+  it("keeps what --force discards instead of dropping it", async () => {
+    // --force is the one write that does not merge, so it is the one write that can
+    // lose something. Under --global the target is ~/.claude.json, which is Claude
+    // Code's session state: repairing the harness must not also be the act that
+    // throws the history away.
+    await mkdir(join(home, ".claude"), { recursive: true });
+    const target = join(home, ".claude.json");
+    const before = '{ "numStartups": 8, and then the file was truncated\n';
+    await writeFile(target, before, { mode: 0o600 });
+
+    const forced = await planClaudeMcp({ force: true, global: true });
+    expect(forced.find((t) => t.id === "claude-mcp")?.reason).toContain(".claude.json.bak");
+    await applyInit(forced);
+
+    expect(await readFile(`${target}.bak`, "utf8")).toBe(before);
+    expect((await stat(`${target}.bak`)).mode & 0o777).toBe(0o600);
+    const doc = JSON.parse(await readFile(target, "utf8")) as {
+      mcpServers: Record<string, unknown>;
+    };
+    expect(doc.mcpServers.subpixel).toBeDefined();
+  });
+
   it("keeps unrelated servers under --force when the file parses fine", async () => {
     // --force clears a conflict. It is not "rewrite every target from scratch": a
     // parseable config still merges, or the flag silently deletes a colleague's

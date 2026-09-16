@@ -158,7 +158,7 @@ spx init --global     # configure every harness on this machine, for every proje
 | Flag | Meaning |
 | --- | --- |
 | `--dry-run` | Render every file that would be written. Writes nothing. |
-| `--force` | Replace a config file that could not be parsed, instead of skipping it. |
+| `--force` | Replace a config file that could not be parsed, instead of skipping it. The old file is kept beside it as `<name>.bak`. |
 | `--only <targets>` | Comma-separated target ids, in place of every target. An unknown id is an error. |
 | `--global` | Write each harness its user-scoped config, so every project gets subpixel. |
 

@@ -34,8 +34,22 @@ export interface TargetPlan {
   state: TargetState;
   /** The file exactly as it would be written. Absent when nothing would be. */
   content?: string;
-  /** Why nothing was written. Present for `absent`, `conflict`, `unsupported`, `stale`. */
+  /**
+   * A note printed beside the target. Usually why nothing was written — `absent`,
+   * `conflict`, `unsupported` and `stale` each carry one — and for a forced write,
+   * where the contents it replaces were kept.
+   */
   reason?: string;
+  /**
+   * `--force` rebuilt this file from scratch instead of merging into it.
+   *
+   * The merge is what keeps everything in a file that is not ours, and a file we could
+   * not parse gets no merge, so a forced write is the one write that drops content.
+   * `~/.claude.json` is the case that matters: it holds Claude Code's session state
+   * rather than an MCP config we own. `applyInit` keeps the old bytes beside the file
+   * so the choice is not between a working harness and that history.
+   */
+  discarded?: boolean;
   /**
    * What was in the file when the plan read it, as a hash.
    *
@@ -107,6 +121,11 @@ function selectWriters(only: string[] | undefined): Writer[] {
 }
 
 /** `TargetPlan.observed`. A file that is not there is a state worth recognising too. */
+/** Where a forced write leaves what it replaced. */
+function backupPath(path: string): string {
+  return `${path}.bak`;
+}
+
 function fingerprint(existing: string | undefined): string {
   if (existing === undefined) return "absent";
   return createHash("sha256").update(existing).digest("hex");
@@ -164,6 +183,7 @@ async function planTarget(
   const writeCtx: InitContext = { ...ctx, dest: base.path };
 
   let content: string;
+  let discarded = false;
   try {
     content = writer.write(existing, writeCtx);
   } catch (err) {
@@ -178,6 +198,7 @@ async function planTarget(
     // written `AGENTS.md` prose — neither of which the flag promises.
     if (!options.force) return { ...base, state: "conflict", reason: err.message };
     content = writer.write(undefined, writeCtx);
+    discarded = existing !== undefined;
   }
 
   if (content === existing) return { ...base, state: "unchanged", content };
@@ -186,6 +207,12 @@ async function planTarget(
     state: existing === undefined ? "created" : "updated",
     content,
     observed: fingerprint(existing),
+    ...(discarded
+      ? {
+          discarded,
+          reason: `could not be parsed; --force rebuilds it and keeps the old file as ${backupPath(base.path)}`,
+        }
+      : {}),
   };
 }
 
@@ -242,14 +269,21 @@ export async function applyInit(plan: TargetPlan[]): Promise<TargetPlan[]> {
   );
   const written: TargetPlan[] = [];
   for (const target of pending) {
-    const now = fingerprint(await readFile(target.path, "utf8").catch(() => undefined));
-    if (target.observed !== undefined && now !== target.observed) {
+    const current = await readFile(target.path, "utf8").catch(() => undefined);
+    if (target.observed !== undefined && fingerprint(current) !== target.observed) {
       target.state = "stale";
       target.reason = "changed while init was reading it; run init again";
       continue;
     }
     const mode = await writeMode(target);
-    await atomicWrite(target.path, target.content!, mode !== undefined ? { mode } : {});
+    const options = mode !== undefined ? { mode } : {};
+    // The only write that is not a merge, so the only one that can lose something.
+    // The copy goes next to the file, with the file's own mode, because a state file's
+    // backup is as private as the state file.
+    if (target.discarded === true && current !== undefined) {
+      await atomicWrite(backupPath(target.path), current, options);
+    }
+    await atomicWrite(target.path, target.content!, options);
     written.push(target);
   }
   return written;

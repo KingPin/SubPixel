@@ -15,7 +15,7 @@ import type {
 } from "../core/types.js";
 import { ASSETS_FILENAME, loadAssets } from "../assets/load.js";
 import { syncAssets } from "../assets/sync.js";
-import { collectDoctorReport } from "../cli/doctor.js";
+import { collectDoctorReport, publicDoctorReport } from "../cli/doctor.js";
 import { buildEditRequest } from "../cli/edit.js";
 import {
   resolveGenerateDeps,
@@ -528,7 +528,7 @@ export const HANDLERS: Record<string, Handler> = {
     return collectStyleReport(config, args.name as string | undefined);
   },
   list_models: async (args) => collectModelReport({ override: args.model as string | undefined }),
-  doctor: async (_args, deps) => collectDoctorReport({ cwd: cwdOf(deps) }),
+  doctor: async (_args, deps) => publicDoctorReport(await collectDoctorReport({ cwd: cwdOf(deps) })),
   get_image_job: async (args, deps) => {
     const id = args.job_id as string;
     const record = await readJob(deps.jobsDir ?? jobsDirFor(join(cwdOf(deps), ".subpixel")), id);

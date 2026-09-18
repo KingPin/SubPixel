@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { authPath, decodeJwtExp, isExpired, readAuth } from "../auth/read.js";
 import { findOnPath } from "../core/fsx.js";
 import { modelCachePath, resolveModel } from "../providers/models.js";
@@ -161,6 +161,51 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
       observedAt: quotaReading?.observedAt,
     },
     notice: TOS_NOTICE,
+  };
+}
+
+/**
+ * Drop the directories from one known path wherever it appears in free text.
+ *
+ * A literal split/join rather than a pattern. The path is known exactly at every
+ * call site here, and the alternative is a regex over prose that has to guess
+ * where a path ends.
+ */
+function shorten(text: string, path: string): string {
+  return text.split(path).join(basename(path));
+}
+
+/**
+ * The doctor report as a model is allowed to see it.
+ *
+ * `spx doctor` is written for a person looking at their own machine, so it names
+ * absolute paths and the ChatGPT account behind the subscription. Over MCP the
+ * same object goes to whatever model the host happens to run, through whatever
+ * provider it happens to use. None of it is a credential, but `accountId` is a
+ * stable identifier for a paying account, and an absolute path carries the user's
+ * name and the shape of their disk.
+ *
+ * Neither is needed to act on the report. Every decision doctor drives is "is this
+ * present, is it expired, is it current", and a basename keeps the half that
+ * answers it: "auth.json is not valid JSON" is still the whole diagnosis. Only the
+ * address is withheld.
+ */
+export function publicDoctorReport(report: DoctorReport): DoctorReport {
+  const { accountId: _accountId, ...auth } = report.auth;
+  return {
+    ...report,
+    codexBinary: report.codexBinary === undefined ? undefined : basename(report.codexBinary),
+    auth: {
+      ...auth,
+      path: basename(report.auth.path),
+      // readAuth builds its messages out of the same path, so masking the field
+      // alone would leave the path in the sentence beside it.
+      ...(auth.problem !== undefined ? { problem: shorten(auth.problem, report.auth.path) } : {}),
+    },
+    config: {
+      ...report.config,
+      ...(report.config.path !== undefined ? { path: basename(report.config.path) } : {}),
+    },
   };
 }
 

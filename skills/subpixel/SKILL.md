@@ -17,10 +17,10 @@ installed. Exit 1 means the setup is incomplete, and every generation will fail 
 same way until it is fixed. Lines marked `warn` are advisory and do not stop a
 generation; only `FAIL` does.
 
-**Every generation costs subscription quota.** A bare argument containing a space is
-shorthand for `spx generate`, so `spx "a red fox"` spends money exactly as
-`spx generate "a red fox"` does. Use `--dry-run` to see the resolved plan and spend
-nothing.
+**A bare argument containing a space is a generation, not a query.** `spx "a red
+fox"` is shorthand for `spx generate "a red fox"` and costs subscription quota
+unless that exact request is already cached. Use `--dry-run` to see the resolved
+plan and spend nothing.
 
 ## Generating
 

@@ -79,11 +79,14 @@ describe("the CLI reference", () => {
 
     const { buildProgram } = await import("../../src/cli/index.js");
     for (const command of (await buildProgram()).commands) {
+      // Its own section has to exist first. Falling back to `generate`'s text before
+      // this check would let `edit` pass with no `## edit` section at all, because
+      // every flag it registers is one `generate` registers too.
+      const own = sections.get(command.name());
+      expect(own, `no section for ${command.name()}`).toBeDefined();
       // `edit` documents itself as "every `generate` flag except ...", which is the
       // honest shape for a command that shares a resolver with another one.
-      const own = sections.get(command.name());
-      const text = command.name() === "edit" ? `${own ?? ""}${sections.get("generate") ?? ""}` : own;
-      expect(text, `no section for ${command.name()}`).toBeDefined();
+      const text = command.name() === "edit" ? own! + sections.get("generate")! : own!;
       for (const option of command.options) {
         // `-n <count>` has no long form, so the short one is its only name.
         const flag = option.long ?? option.short!;

@@ -46,8 +46,27 @@ version had. Those changes are listed under **Changed** with what they affect.
   third-party vendor prefixes, so a key pasted into a prompt is stored in the
   manifest as prompt text.
 
+### Added
+
+- **A cache hit says so on the progress line.** `cached` reached the caller only
+  in the result object, which only `--json` publishes, so an agent watching
+  progress saw a free hit and a paid generation render identically. `done`
+  now carries it and reads `done (cached)` on both the CLI's stderr and an MCP
+  progress notification.
+
 ### Changed
 
+- **`spx sync` sends its progress to stderr in every mode.** README: stdout
+  carries the path of the written file and nothing else. The default mode put the
+  per-asset lines on stdout, where a caller reading it to learn what was produced
+  could not tell a progress line from an answer. `--json` already had this right.
+- **`spx doctor` keeps `FAIL` for the rows that made it exit 1.** A missing
+  `codex` binary, an editor without `spx init`, a zero-tool MCP server and a
+  nearly-spent allowance all printed `FAIL` while the command exited 0. None of
+  them stops an image being generated, so they print `warn` now, and an agent that
+  greps `FAIL` sees only the reasons the exit code is non-zero.
+- **`spx edit` no longer offers `--concurrency`.** It turns one image into one
+  image; there was nothing for the number to do.
 - **The bare-prompt shorthand needs more than one word.** `spx fox` was rewritten
   to `spx generate fox`, so a mistyped subcommand spent a generation instead of
   reporting a typo. A single word is now reported as an unknown command.
@@ -66,6 +85,14 @@ version had. Those changes are listed under **Changed** with what they affect.
   grew with the run while only 500 characters were ever reported — and they were
   the first 500, which is whatever codex warned about on the way up rather than
   the reason the run failed.
+- **A closed pipe ends the run quietly.** `spx generate ... | head -1` closed
+  stdout under the process, and the next write raised an `error` event with no
+  listener: a stack trace and exit 1 for a run that had already written the image
+  and printed its path. Only `EPIPE` is swallowed.
+- **`spx doctor` reads the quota of the project it was pointed at.** It resolved
+  `.subpixel/quota.json` against `process.cwd()` and ignored the working directory
+  it was given, so under MCP the quota section reported a directory that was not
+  the project.
 
 ## [0.3.0] - 2026-09-16
 

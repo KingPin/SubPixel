@@ -1,0 +1,23 @@
+version: 2
+
+# Grouped so a quiet week is one PR, not six. Security patches still arrive
+# ungrouped and immediately — those come from Dependabot security updates,
+# which is a separate switch on the repo and stays on.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      npm:
+        patterns: ["*"]
+
+  # The release workflow publishes to npm over OIDC. A stale action in that
+  # chain is a supply-chain problem, not a housekeeping one.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

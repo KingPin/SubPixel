@@ -1,4 +1,4 @@
-import { basename, join } from "node:path";
+import { basename, join, posix, win32 } from "node:path";
 import { authPath, decodeJwtExp, isExpired, readAuth } from "../auth/read.js";
 import { findOnPath } from "../core/fsx.js";
 import { modelCachePath, resolveModel } from "../providers/models.js";
@@ -175,6 +175,11 @@ function shorten(text: string, path: string): string {
   return text.split(path).join(basename(path));
 }
 
+function pathLeaf(path: string): string {
+  if (/^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\")) return win32.basename(path);
+  return posix.basename(path);
+}
+
 /**
  * Drop the directories from every absolute path in free text.
  *
@@ -183,13 +188,16 @@ function shorten(text: string, path: string): string {
  * inside the installed package, or a writer target under the user's home -- and
  * which one it is depends on how subpixel was installed.
  *
- * A path here starts at a `/` and ends at whitespace or a quote, which is where
- * every path in a Node error message ends. The pattern cannot backtrack: a segment
- * cannot contain the `/` that starts the next one, so each repetition has exactly
- * one way to match.
+ * Node tends to quote the whole path when it contains spaces, and Windows errors
+ * spell absolute paths with drive letters or UNC roots. Match the quoted forms
+ * first so spaces stay inside the path, then the unquoted fallbacks.
  */
 function shortenPaths(text: string): string {
-  return text.replace(/\/(?:[^/\s'"]+\/)*([^/\s'"]+)/g, "$1");
+  return text
+    .replace(/(['"])(\/[^'"\r\n]+|[A-Za-z]:[\\/][^'"\r\n]+|\\\\[^'"\r\n]+)\1/g, (_match, quote, path) => {
+      return `${quote}${pathLeaf(path)}${quote}`;
+    })
+    .replace(/\/[^\s'"]+|[A-Za-z]:[\\/][^\s'"]+|\\\\[^\s'"]+/g, (path) => pathLeaf(path));
 }
 
 /**

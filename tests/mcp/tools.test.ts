@@ -173,7 +173,7 @@ describe("the read-only tools", () => {
         // What a package installed without its skills directory throws. The path is
         // not one publicDoctorReport knows in advance: it is wherever npm put us.
         problem:
-          "ENOENT: no such file or directory, open '/home/tester/.local/share/pnpm/global/5/node_modules/subpixel/skills/subpixel/SKILL.md'",
+          "ENOENT: no such file or directory, open '/Users/Jane Doe/.local/share/pnpm/global/5/node_modules/subpixel/skills/subpixel/SKILL.md'; retry with \"C:\\Users\\Jane Doe\\AppData\\Local\\subpixel\\skills\\subpixel\\SKILL.md\"",
       },
     } satisfies DoctorReport);
 
@@ -192,7 +192,7 @@ describe("the read-only tools", () => {
     expect(mcp.auth.problem).toContain("is not valid JSON");
     // The whole diagnosis survives. Only the address is withheld.
     expect(mcp.install.problem).toBe(
-      "ENOENT: no such file or directory, open 'SKILL.md'",
+      "ENOENT: no such file or directory, open 'SKILL.md'; retry with \"SKILL.md\"",
     );
 
     // It names neither the account behind the subscription nor the user's disk.
@@ -200,6 +200,8 @@ describe("the read-only tools", () => {
     expect(JSON.stringify(mcp)).not.toContain("acct-1a2b3c4d");
     expect(JSON.stringify(mcp)).not.toContain("/home/tester");
     expect(JSON.stringify(mcp)).not.toContain("acme-rebrand");
+    expect(JSON.stringify(mcp)).not.toContain("/Users/Jane Doe");
+    expect(JSON.stringify(mcp)).not.toContain("C:\\Users\\Jane Doe");
     expect(mcp.auth.path).toBe("auth.json");
     expect(mcp.config.path).toBe("subpixel.config.json");
     expect(mcp.codexBinary).toBe("codex");

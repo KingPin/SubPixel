@@ -326,7 +326,12 @@ export function validateArgs(name: string, args: unknown): Record<string, unknow
 
   const bag = args as Record<string, unknown>;
   for (const key of Object.keys(bag)) {
-    if (!(key in inputSchema.properties)) {
+    // hasOwn, not `in`. `"constructor" in {}` is true, and so is `toString`,
+    // `__proto__` and the rest of Object.prototype, so `in` let a whole set of
+    // names through the one gate whose job is to reject names the tool does not
+    // declare. JSON.parse puts `__proto__` on the object as an own property, so
+    // that one arrives from the wire.
+    if (!Object.hasOwn(inputSchema.properties, key)) {
       const known = Object.keys(inputSchema.properties).sort().join(", ");
       throw new ConfigError(`${name} has no argument "${key}". Accepted: ${known || "none"}.`);
     }

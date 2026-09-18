@@ -127,6 +127,25 @@ describe("the tool schemas", () => {
     }
   });
 
+  it.each(["constructor", "toString", "__proto__", "valueOf", "hasOwnProperty"])(
+    "rejects %j, which is not an argument any tool declares",
+    (key) => {
+      // `key in properties` is true for every one of these. The gate that
+      // rejects arguments a tool does not declare has to ask whether the schema
+      // owns the name, not whether anything in its prototype chain answers to it.
+      expect(() => validateArgs("generate_image", { prompt: "a fox", [key]: "x" })).toThrow(
+        new RegExp(`has no argument "${key.replace("$", "\\$")}"`),
+      );
+    },
+  );
+
+  it("rejects __proto__ arriving as an own property from the wire", () => {
+    // JSON.parse does not run the setter: this lands as a plain own key, which
+    // Object.keys enumerates and `in` waved through.
+    const args = JSON.parse('{"prompt":"a fox","__proto__":{"polluted":true}}') as unknown;
+    expect(() => validateArgs("generate_image", args)).toThrow(/has no argument/);
+  });
+
   it("checks the element type inside an array argument", () => {
     expect(() => validateArgs("generate_image", { prompt: "a fox", variants: [400, "800"] })).toThrow(
       /variants\[1\]" must be a whole number/,

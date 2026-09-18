@@ -33,24 +33,6 @@ export interface RegenCliOptions {
 }
 
 /**
- * The directory a sidecar's reference images must stay inside.
- *
- * Anchored on the IMAGE, not on the shell. A sidecar's whole promise is that it
- * replays the same way from any working directory, so a root taken from `cwd` would
- * make one sidecar legal in one terminal and a security refusal in another — and the
- * confinement would be decided by where the user happened to be standing rather than
- * by what the project contains.
- *
- * Any of the three markers ends the walk, because all three mean "a human drew a
- * boundary here". Falling back to the image's own directory when there is no marker
- * at all is the conservative answer: with nothing declaring a project, the only
- * directory known to be involved is the one the image is in.
- *
- * ponytail: marker list, not a VCS query. A project rooted by something else — a
- * go.mod, a Cargo.toml — confines to the image's directory until its marker is added
- * here, and says so when it refuses.
- */
-/**
  * The directory a sidecar's reference images have to stay inside.
  *
  * Anchored on the IMAGE, not the shell. A sidecar records its references relative
@@ -68,6 +50,13 @@ export interface RegenCliOptions {
  * A tree with no subpixel config at all falls back to its `.git` root, and an image
  * outside even that is its own root, which still confines a reference to the
  * directory the image sits in.
+ *
+ * ponytail: the no-marker fallback is stricter than the write side. `spx generate`
+ * takes `--image` from anywhere, so in a directory with neither a config nor a
+ * repository it can record `../refs/source.png` into a sidecar that `spx regen`
+ * then refuses. Money-safe — it refuses before it spends, and the message names
+ * `--image` as the way through — but it is a refusal about the user's own file.
+ * `spx init`, or any `subpixel.config.json`, ends it.
  */
 export async function projectRootFor(imagePath: string): Promise<string> {
   const start = dirname(resolve(imagePath));

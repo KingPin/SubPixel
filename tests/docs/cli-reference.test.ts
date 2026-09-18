@@ -63,13 +63,31 @@ describe("the CLI reference", () => {
     }
   });
 
-  it("documents every flag the commands register", async () => {
+  it("documents every flag in the section of the command that registers it", async () => {
+    // In its OWN section, not just somewhere in the file. A global search passes as
+    // long as some other command happens to share the flag name, which is how the
+    // reference came to claim `edit` had no `--emit` while `edit` registered one.
+    // Split on the headings rather than matching each section: `$` under /m ends at
+    // every line, which silently makes every section body the empty string, and an
+    // empty string is a check that passes for want of anything to disagree with.
+    const sections = new Map<string, string>();
+    for (const part of DOC.split(/^## /m).slice(1)) {
+      const heading = part.slice(0, part.indexOf("\n"));
+      // "doctor and models" documents two commands in one section.
+      for (const name of heading.split(/\W+/)) sections.set(name, part);
+    }
+
     const { buildProgram } = await import("../../src/cli/index.js");
     for (const command of (await buildProgram()).commands) {
+      // `edit` documents itself as "every `generate` flag except ...", which is the
+      // honest shape for a command that shares a resolver with another one.
+      const own = sections.get(command.name());
+      const text = command.name() === "edit" ? `${own ?? ""}${sections.get("generate") ?? ""}` : own;
+      expect(text, `no section for ${command.name()}`).toBeDefined();
       for (const option of command.options) {
         // `-n <count>` has no long form, so the short one is its only name.
         const flag = option.long ?? option.short!;
-        expect(DOC, `${command.name()} ${flag}`).toContain(flag);
+        expect(text, `${command.name()} ${flag}`).toContain(flag);
       }
     }
   });

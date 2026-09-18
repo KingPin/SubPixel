@@ -404,6 +404,61 @@ describe("generateViaCodexExec", () => {
     deadline.dispose();
   });
 
+  it("kills the child when it emits error after the fork succeeded", async () => {
+    // A real, long-lived child, then an `error` event on it. Nothing else is
+    // watching by then: the provider resolves on `error` and clears its kill
+    // timer, so without an explicit kill this process returns while `codex exec`
+    // carries on generating and billing.
+    let child: ReturnType<typeof spawn> | undefined;
+    const err = generateViaCodexExec(
+      { prompt: "a fox" },
+      {
+        model: "m",
+        spawnFn: (() => {
+          child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          return child;
+        }) as never,
+      },
+    ).catch((e: unknown) => e);
+
+    const exited = new Promise<void>((done) => {
+      setTimeout(() => {
+        child?.on("exit", () => done());
+        child?.emit("error", new Error("the pipe broke"));
+      }, 25);
+    });
+
+    await err;
+    await exited;
+    expect(child?.killed).toBe(true);
+  });
+
+  it("reports the tail of a long stderr, bounded, not the head", async () => {
+    // codex streams progress and reconnect lines to stderr for as long as a run
+    // lasts. The head of that is whatever it warned about on the way up. The
+    // reason the run failed is the last thing written.
+    const script =
+      'process.stderr.write("FIRSTLINE ");' +
+      'for (let i = 0; i < 200; i++) process.stderr.write("x".repeat(200));' +
+      'process.stderr.write(" THE REAL REASON");' +
+      "setTimeout(() => process.exit(1), 50);";
+    const error = (await generateViaCodexExec(
+      { prompt: "a fox" },
+      {
+        model: "m",
+        spawnFn: (() =>
+          spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "pipe"] })) as never,
+      },
+    ).catch((e: unknown) => e)) as Error;
+
+    expect(error.message).toContain("THE REAL REASON");
+    expect(error.message).not.toContain("FIRSTLINE");
+    // Bounded whatever the child wrote: 40 KB went to stderr above.
+    expect(error.message.length).toBeLessThan(600);
+  });
+
   it("keeps an image the run saved before it exited non-zero", async () => {
     // The scratch tree is deleted in `finally`. Classifying the exit first throws
     // away the only copy of an image the user has already paid for.

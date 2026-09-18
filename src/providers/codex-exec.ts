@@ -294,6 +294,13 @@ interface ChildHarvest {
   error?: { cause: Error; spawned: boolean };
 }
 
+/**
+ * How much of the child's stderr is retained. Generous enough to hold a real
+ * stack or a run of retry lines, small enough that a chatty hour-long run cannot
+ * turn a log stream into memory pressure.
+ */
+const STDERR_KEEP = 8192;
+
 async function collectFromChild(
   child: ChildProcess,
   timeoutMs: number,
@@ -315,7 +322,13 @@ async function collectFromChild(
 
   if (child.stderr) {
     child.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString("utf8");
+      // Bounded, and bounded at the TAIL. `codex exec` streams progress and
+      // reconnect lines to stderr for as long as a run lasts, so an unbounded
+      // accumulator grows with the run while only a few hundred characters of it
+      // ever reach a human. The head is the wrong few hundred: the first thing
+      // codex writes is routinely a warning about something that did not stop it,
+      // and the reason a run failed is the last thing it writes.
+      stderr = (stderr + chunk.toString("utf8")).slice(-STDERR_KEEP);
     });
   }
 
@@ -348,6 +361,12 @@ async function collectFromChild(
   const errored = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
     child.once("error", (err: Error) => {
       failure = err;
+      // An `error` AFTER the fork succeeded leaves a live `codex exec` behind.
+      // Resolving here wins the race below, the `finally` clears the kill timer,
+      // and from that moment nothing is watching the child: it goes on to finish
+      // the generation and bill for it while this process has already given up.
+      // `pid` is the test for whether there is anything to kill.
+      if (child.pid !== undefined) child.kill("SIGKILL");
       // A spawn that never happened emits no dependable `close`, so this resolves
       // the wait itself rather than leaving the caller parked until the timer.
       resolve({ code: null, signal: null });
@@ -522,7 +541,7 @@ export async function generateViaCodexExec(
       // Only a failure BEFORE the spawn is genuinely not-submitted. That case is
       // handled by `hasCodexBinary()` and by the spawn error path above.
       throw new SubmissionUncertain(
-        `codex exec exited with code ${code}: ${redact(stderr.slice(0, 500))}`,
+        `codex exec exited with code ${code}: ${redact(stderr.slice(-500))}`,
       );
     }
 

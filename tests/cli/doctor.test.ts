@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -146,6 +146,32 @@ describe("collectDoctorReport quota reporting", () => {
     const report = await collectDoctorReport(await baseOptions(join(home, "absent.json")));
     expect(report.quota.warn).toBe(false);
     expect(report.quota.summary).toContain("unknown");
+  });
+
+  it("reads the quota of the project, not of the process", async () => {
+    // `spx generate` writes the reading to `<cwd>/.subpixel/quota.json` for the project
+    // it was pointed at. Under MCP the server's own directory is somewhere else
+    // entirely, so a doctor that defaulted to `process.cwd()` would report an allowance
+    // belonging to a different project -- usually none at all.
+    const tree = await mkdtemp(join(tmpdir(), "subpixel-doctor-quota-"));
+    await mkdir(join(tree, ".subpixel"), { recursive: true });
+    await writeFile(
+      join(tree, ".subpixel", "quota.json"),
+      JSON.stringify({
+        planType: "plus",
+        observedAt: new Date().toISOString(),
+        windows: [{ usedPercent: 96, windowMinutes: 300 }],
+      }),
+    );
+    const report = await collectDoctorReport({
+      cwd: tree,
+      home,
+      env: {},
+      authPath: await seedAuth(),
+      cachePath: join(home, "missing.json"),
+    });
+    expect(report.quota.warn).toBe(true);
+    expect(report.quota.stale).toBe(false);
   });
 
   it("survives a corrupt quota file", async () => {

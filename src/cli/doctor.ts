@@ -129,7 +129,11 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
   // Never throws: `loadQuota` degrades a missing, truncated, or hand-edited file to
   // undefined, and an unknown allowance must not turn a healthy environment into a FAIL.
   const quotaReading = await loadQuota(
-    options.quotaPath ?? join(process.cwd(), ".subpixel", "quota.json"),
+    // `options.cwd`, not `process.cwd()`. The writer is `spx generate`, which puts the
+    // reading in `join(cwd, ".subpixel")` for the project it was pointed at. Under MCP
+    // the server's own directory is not that project, so reading the default here would
+    // report an allowance belonging to somewhere else -- or, more often, none at all.
+    options.quotaPath ?? join(options.cwd ?? process.cwd(), ".subpixel", "quota.json"),
   );
 
   return {

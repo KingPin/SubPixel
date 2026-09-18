@@ -129,7 +129,11 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
   // Never throws: `loadQuota` degrades a missing, truncated, or hand-edited file to
   // undefined, and an unknown allowance must not turn a healthy environment into a FAIL.
   const quotaReading = await loadQuota(
-    options.quotaPath ?? join(process.cwd(), ".subpixel", "quota.json"),
+    // `options.cwd`, not `process.cwd()`. The writer is `spx generate`, which puts the
+    // reading in `join(cwd, ".subpixel")` for the project it was pointed at. Under MCP
+    // the server's own directory is not that project, so reading the default here would
+    // report an allowance belonging to somewhere else -- or, more often, none at all.
+    options.quotaPath ?? join(options.cwd ?? process.cwd(), ".subpixel", "quota.json"),
   );
 
   return {
@@ -276,11 +280,17 @@ function describeInstall(install: DoctorReport["install"]): string {
 
 export function formatDoctorReport(report: DoctorReport): string {
   const lines: string[] = [];
+  // Two markers, one meaning each. FAIL is reserved for the rows that make `report.ok`
+  // false, so `spx doctor | grep FAIL` finds exactly the reasons the command exited 1.
+  // Everything else worth flagging is `warn`: an agent that stops on FAIL was stopping
+  // on an unconfigured editor or a nearly-spent allowance, neither of which prevents an
+  // image from being generated.
   const mark = (ok: boolean) => (ok ? "ok  " : "FAIL");
+  const advise = (ok: boolean) => (ok ? "ok  " : "warn");
 
   lines.push(`${mark(true)} Node      ${report.node}`);
   lines.push(
-    `${mark(report.codexBinary !== undefined)} codex     ${report.codexBinary ?? "not found on PATH (codex-exec fallback unavailable)"}`,
+    `${advise(report.codexBinary !== undefined)} codex     ${report.codexBinary ?? "not found on PATH (codex-exec fallback unavailable)"}`,
   );
   if (report.auth.present) {
     const expiry = report.auth.expired
@@ -300,13 +310,13 @@ export function formatDoctorReport(report: DoctorReport): string {
   lines.push(
     `${mark(true)} config    ${report.config.path ?? "none"}${report.config.styles > 0 ? ` (${report.config.styles} styles)` : ""}`,
   );
-  lines.push(`${mark(report.mcp.tools > 0)} mcp       ${report.mcp.tools} tools on \`spx mcp\``);
-  lines.push(`${mark(report.install.ok)} init      ${describeInstall(report.install)}`);
-  // `mark` is inverted here on purpose. Every other line marks "is this present and
+  lines.push(`${advise(report.mcp.tools > 0)} mcp       ${report.mcp.tools} tools on \`spx mcp\``);
+  lines.push(`${advise(report.install.ok)} init      ${describeInstall(report.install)}`);
+  // `advise` is inverted here on purpose. Every other line marks "is this present and
   // usable"; this one marks "is there room left". A reading above the threshold is the
-  // one thing in the report the user can act on before it bites, so it gets the FAIL
-  // column even though nothing is broken. `report.ok` is deliberately unaffected.
-  lines.push(`${mark(!report.quota.warn)} ${report.quota.summary}`);
+  // one thing in the report the user can act on before it bites, so it gets a column of
+  // its own even though nothing is broken.
+  lines.push(`${advise(!report.quota.warn)} ${report.quota.summary}`);
   lines.push("");
   lines.push(report.notice);
   return lines.join("\n");

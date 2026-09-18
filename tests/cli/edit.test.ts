@@ -122,9 +122,10 @@ describe("the edit command surface", () => {
     // `edit` and `generate` route through the same resolver and the same runner, so
     // a flag registered on one and not the other is parsed by nobody: the shared code
     // reads `options.allowPaid`, commander never sets it, and `spx edit --allow-paid`
-    // dies as an unknown option. These three are the deliberate exceptions: `edit`
-    // makes one image from one positional source.
-    const generateOnly = new Set(["-n", "--image"]);
+    // dies as an unknown option. These are the deliberate exceptions: `edit` makes one
+    // image from one positional source, so there is no count, no reference list, and
+    // nothing to run in parallel.
+    const generateOnly = new Set(["-n", "--image", "--concurrency"]);
     const missing = [...flags("generate")].filter(
       (flag) => !generateOnly.has(flag) && !flags("edit").has(flag),
     );

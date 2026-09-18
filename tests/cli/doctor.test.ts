@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -101,6 +101,46 @@ describe("formatDoctorReport", () => {
     expect(text).toContain("Model");
     expect(text).not.toContain("rt_secret_value_here");
   });
+
+  // FAIL has one meaning: this is the row that made `report.ok` false, and so the row
+  // that made the command exit 1. Agents grep for it. An editor that has not had
+  // `spx init` run, a missing `codex` binary and a nearly-spent allowance are all worth
+  // reading and none of them stops an image being generated, so they get `warn`.
+  it("reserves FAIL for the row that made the report fail", async () => {
+    const fresh = await mkdtemp(join(tmpdir(), "subpixel-doctor-marks-"));
+    const quotaPath = join(fresh, "quota.json");
+    await writeFile(
+      quotaPath,
+      JSON.stringify({
+        planType: "plus",
+        observedAt: new Date().toISOString(),
+        windows: [{ usedPercent: 96, windowMinutes: 300 }],
+      }),
+    );
+    const report = await collectDoctorReport({
+      cwd: fresh,
+      home,
+      env: {},
+      authPath: await seedAuth(),
+      cachePath: join(home, "missing.json"),
+      quotaPath,
+    });
+    expect(report.ok).toBe(true);
+    const text = formatDoctorReport(report);
+    expect(text).not.toContain("FAIL");
+    expect(text).toContain("warn codex");
+    expect(text).toContain("warn init");
+    expect(text).toMatch(/warn .*96%/);
+  });
+
+  it("marks the row that made the report fail", async () => {
+    const report = await collectDoctorReport({
+      authPath: join(home, "nope.json"),
+      cachePath: join(home, "missing.json"),
+    });
+    expect(report.ok).toBe(false);
+    expect(formatDoctorReport(report)).toContain("FAIL Auth");
+  });
 });
 
 describe("collectDoctorReport quota reporting", () => {
@@ -146,6 +186,32 @@ describe("collectDoctorReport quota reporting", () => {
     const report = await collectDoctorReport(await baseOptions(join(home, "absent.json")));
     expect(report.quota.warn).toBe(false);
     expect(report.quota.summary).toContain("unknown");
+  });
+
+  it("reads the quota of the project, not of the process", async () => {
+    // `spx generate` writes the reading to `<cwd>/.subpixel/quota.json` for the project
+    // it was pointed at. Under MCP the server's own directory is somewhere else
+    // entirely, so a doctor that defaulted to `process.cwd()` would report an allowance
+    // belonging to a different project -- usually none at all.
+    const tree = await mkdtemp(join(tmpdir(), "subpixel-doctor-quota-"));
+    await mkdir(join(tree, ".subpixel"), { recursive: true });
+    await writeFile(
+      join(tree, ".subpixel", "quota.json"),
+      JSON.stringify({
+        planType: "plus",
+        observedAt: new Date().toISOString(),
+        windows: [{ usedPercent: 96, windowMinutes: 300 }],
+      }),
+    );
+    const report = await collectDoctorReport({
+      cwd: tree,
+      home,
+      env: {},
+      authPath: await seedAuth(),
+      cachePath: join(home, "missing.json"),
+    });
+    expect(report.quota.warn).toBe(true);
+    expect(report.quota.stale).toBe(false);
   });
 
   it("survives a corrupt quota file", async () => {

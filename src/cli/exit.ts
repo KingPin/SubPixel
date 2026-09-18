@@ -15,3 +15,21 @@ export function exitCodeFor(err: unknown): number {
 export function messageFor(err: unknown): string {
   return redact(err instanceof Error ? err.message : String(err));
 }
+
+/**
+ * Let a reader that stopped reading end this process quietly.
+ *
+ * `spx generate ... | head -1` closes the pipe as soon as `head` has its line. The
+ * next write raises an `error` event on the stream, and an `error` event with no
+ * listener is an uncaught exception: a stack trace on stderr and exit 1, for a run
+ * that had already written the image and printed its path. The downstream `head` is
+ * not this process's failure.
+ *
+ * Only EPIPE. Anything else on the stream is still ours, and re-throwing it here
+ * leaves it exactly as loud as it was before this function existed.
+ */
+export function ignoreEpipe(stream: NodeJS.EventEmitter): void {
+  stream.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code !== "EPIPE") throw err;
+  });
+}

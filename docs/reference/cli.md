@@ -64,8 +64,9 @@ spx edit logo.png "put it on a dark navy background"
 ```
 
 Takes exactly one source image and an instruction. Every `generate` flag applies,
-except `--image`, `--emit` and `-n`: the source is the positional argument, and
-`edit` writes one image.
+except `--image`, `-n` and `--concurrency`: the source is the positional argument,
+and `edit` turns one image into one image, so there is nothing to run in parallel.
+`--emit` works here exactly as it does on `generate`.
 
 ## regen
 
@@ -85,9 +86,22 @@ Reference paths are stored relative to the sidecar, so a replay reads the same f
 whichever directory you run it from. A missing, unparseable, or wrong-shaped
 manifest exits 2 before any quota is spent; it never regenerates from nothing.
 
-Accepted overrides: `--size`, `--style`, `--model`, `--backend`, `-o`. Each beats
-what the manifest recorded. Manifests written before this shape existed replay
-best-effort and say so once on stderr.
+| Flag | Meaning |
+| --- | --- |
+| `--size <WxH>` | Override the recorded generation size. |
+| `--style <name>` | Replace the recorded style with a named one from the config. |
+| `--model <slug>` | Pin a driver model instead of the recorded one. |
+| `-b, --backend <name>` | `codex-http`, `codex-exec`, `auto`. |
+| `-o, --out <path>` | Write here instead of over the original. |
+| `--json` | Emit the whole result as one JSON document on stdout. |
+| `--emit <format>` | `path`, `markdown`, `jsx`, `html`. |
+| `-v, --verbose` | Verbose logging on stderr. |
+| `-q, --quiet` | Errors only on stderr. |
+
+Each override beats what the manifest recorded; everything else replays as written.
+There is no `--no-cache`, because `regen` always ignores the cache, and no
+`--overwrite`, because writing over the original is the whole point. Manifests
+written before this shape existed replay best-effort and say so once on stderr.
 
 ## icons
 
@@ -239,6 +253,26 @@ spx models --json       # the same, as one JSON document
 which harnesses are still waiting for `spx init`. Neither affects the exit code — an
 unconfigured editor cannot stop an image being generated. `doctor` exits 1 only when
 the credentials are unusable.
+
+## The cache
+
+Every run hashes the inputs that change the picture — prompt, size, quality,
+background, format, exact size, style, transparency, and the *contents* of each
+reference image — and serves a byte-identical hit without calling the backend.
+A hit says `done (cached)` on the progress line and sets `"cached": true` under
+`--json`, so an agent can tell a free result from a paid one.
+
+The driver model is deliberately **not** part of that hash. It rotates whenever
+OpenAI ships a new one, and hashing it would invalidate every image you already
+have on the day that happens, at your expense. The model that drew each image is
+recorded in its sidecar manifest instead.
+
+Reference images are hashed by their contents rather than their paths, so moving a
+reference does not invalidate the cache and editing one does.
+
+The cache lives in `.subpixel/` in the working directory, beside the quota reading
+and the run locks. Deleting it costs nothing but the next regeneration. `--no-cache`
+skips the lookup for one request, and `spx regen` always does.
 
 ## subpixel.config.json
 

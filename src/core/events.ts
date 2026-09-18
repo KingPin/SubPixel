@@ -12,7 +12,11 @@ export type EventSink = (event: GenerationEvent) => void;
  */
 export function describeEvent(event: GenerationEvent): string {
   const subject = event.assetId ?? (event.index === undefined ? undefined : `image ${event.index + 1}`);
-  const head = subject ? `${subject}: ${event.stage}` : event.stage;
+  // On the stage, not appended to the line: `message` is the written path and the
+  // line reads `... done (cached) — /out/fox.png`. Where the money went is the first
+  // thing a reader of this line wants and the last thing a path would let them find.
+  const stage = event.cached === true ? `${event.stage} (cached)` : event.stage;
+  const head = subject ? `${subject}: ${stage}` : stage;
   return event.message ? `${head} — ${event.message}` : head;
 }
 

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdtemp, symlink } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -43,5 +43,20 @@ describe.runIf(built)("installed binary", () => {
       (err: { stdout?: string }) => ({ stdout: err.stdout ?? "" }),
     );
     expect(stdout.startsWith("{")).toBe(true);
+  });
+});
+
+describe("the bootstrap", () => {
+  it("guards both output streams against a closed pipe", async () => {
+    // Read as text, because bin.ts calls `main()` the moment it is imported. What is
+    // being pinned is that BOTH streams are guarded: `spx generate ... 2>&1 | head -1`
+    // is one pipe wearing two descriptors, so when `head` leaves, the progress lines
+    // on stderr raise EPIPE exactly as the path on stdout does, and an unguarded
+    // stderr turns a run that finished into a stack trace and exit 1. The stderr line
+    // has been dropped once in review already, which is why it is worth a test.
+    const source = await readFile(resolve("src/cli/bin.ts"), "utf8");
+    for (const stream of ["stdout", "stderr"]) {
+      expect(source, stream).toContain(`ignoreEpipe(process.${stream})`);
+    }
   });
 });

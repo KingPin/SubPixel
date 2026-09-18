@@ -1,6 +1,7 @@
+import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 import { AuthExpired, ConfigError, DriftDetected } from "../../src/core/errors.js";
-import { exitCodeFor, messageFor } from "../../src/cli/exit.js";
+import { exitCodeFor, ignoreEpipe, messageFor } from "../../src/cli/exit.js";
 
 describe("exitCodeFor", () => {
   it("reads the code off a SubpixelError", () => {
@@ -33,5 +34,25 @@ describe("messageFor", () => {
     expect(messageFor(new Error("Bearer eyJhbGciOiJIUzI1NiJ9.payload.signature"))).not.toContain(
       "eyJhbGciOiJIUzI1NiJ9",
     );
+  });
+});
+
+describe("ignoreEpipe", () => {
+  // An `error` event with no listener is an uncaught exception, so what this function
+  // buys is the difference between a stack trace on a finished run and nothing at all.
+  // `EventEmitter.emit` runs its listeners synchronously, so a listener that throws
+  // throws out of the `emit` call here.
+  const broken = (code: string): (() => void) => {
+    const stream = new EventEmitter();
+    ignoreEpipe(stream);
+    return () => stream.emit("error", Object.assign(new Error(code), { code }));
+  };
+
+  it("swallows a closed pipe", () => {
+    expect(broken("EPIPE")).not.toThrow();
+  });
+
+  it("leaves every other stream error as loud as it was", () => {
+    expect(broken("ENOSPC")).toThrow("ENOSPC");
   });
 });

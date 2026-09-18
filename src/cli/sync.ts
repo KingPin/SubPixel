@@ -112,9 +112,11 @@ export async function runSync(options: SyncOptions): Promise<void> {
     // Same three-way rule `runGenerate` uses. `logLevelFor` takes only `quiet` and
     // `verbose`, so it reads `SyncOptions` without a cast.
     logger: createLogger({ level: logLevelFor(options) }),
-    // --json must leave stdout holding exactly one JSON document, so progress goes
-    // to stderr in that mode rather than being suppressed.
-    log: options.json === true ? warn : options.quiet === true ? undefined : (line) => process.stdout.write(`${line}\n`),
+    // stderr in every mode, not just under `--json`. README: stdout carries the path
+    // of the written file and nothing else, and a caller that reads stdout to learn
+    // what was produced has no way to tell a progress line from an answer. Under
+    // `--json` the same rule is what leaves stdout holding exactly one document.
+    log: options.quiet === true ? undefined : (line) => process.stderr.write(`${line}\n`),
     ...(options.provider ? { provider: options.provider } : {}),
     warnAlways: warn,
   });

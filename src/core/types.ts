@@ -262,4 +262,12 @@ export interface GenerationEvent {
   message?: string;
   /** The `assets.yml` id, set when the event came from a sync run. */
   assetId?: string;
+  /**
+   * True when this image was served from the cache and cost nothing.
+   *
+   * Set on `done`. The result object carries the same answer, but only `--json`
+   * publishes it, and an agent watching progress has no other way to tell a free
+   * hit from a paid generation.
+   */
+  cached?: boolean;
 }

@@ -193,24 +193,25 @@ export async function buildProgram(): Promise<Command> {
       choice("--format <fmt>", "output format (default: the config, else png)", IMAGE_FORMATS),
     )
     .option("--style <name>", "apply a named style from the project config")
-    .option("--exact-size <WxH>", "resize the result to exactly this size")
+    .option("--exact-size <WxH>", "post-process to exactly this size (requires sharp)")
     .option(
       "--transparent",
       "generate against a key colour and remove it, giving a real alpha channel",
     )
     .option("--variants <widths>", "also write these widths, e.g. 400,800,1200")
-    .option("-o, --out <path>", "write to this exact path")
-    .option("--out-dir <dir>", "directory for the result")
-    .option("--model <slug>", "pin the driver model")
+    .option("-o, --out <path>", "write to this exact file")
+    .option("--out-dir <dir>", "directory for generated images (default: the config, else the working directory)")
+    .option("--model <slug>", "pin a driver model")
     .option("-b, --backend <name>", "codex-http | codex-exec | auto")
     .option("--dry-run", "show what would be sent without generating")
-    .option("--no-cache", "ignore any cached result")
-    .option("--overwrite", "replace an existing file at the output path")
+    .option("--no-cache", "ignore the cache for this request")
+    .option("--overwrite", "replace an existing output file")
     .option("--no-overwrite", "write a -v2 sibling instead of replacing (the default)")
     .option("-f, --force", "shorthand for --no-cache --overwrite")
     .option("--timeout <seconds>", "whole-request budget, measured from the moment the request starts")
     .option("--stall-timeout <sec>", "give up after this many seconds with no stream activity")
-    .option("--concurrency <n>", "maximum simultaneous requests (default: the config, else 2)")
+    // No --concurrency. `edit` turns one image into one image, so there is nothing to
+    // run in parallel and a number here would only look like it did something.
     .option("--json", "emit a single JSON object on stdout")
     .addOption(choice("--emit <format>", "how to print the result", EMIT_FORMATS).default("path"))
     .option("-v, --verbose", "verbose logging on stderr")

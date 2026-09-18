@@ -135,6 +135,42 @@ describe("runSync --check", () => {
   });
 });
 
+describe("runSync output contract", () => {
+  // README: stdout carries the path of the written file and nothing else. A caller
+  // that reads stdout to learn what a run produced cannot tell a progress line from
+  // an answer, and under `--json` a progress line on stdout is a second document.
+  it("keeps progress off stdout", async () => {
+    const path = await project(MANIFEST);
+    const out: string[] = [];
+    const err: string[] = [];
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+      out.push(String(chunk));
+      return true;
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      err.push(String(chunk));
+      return true;
+    });
+
+    try {
+      await runSync({
+        file: path,
+        provider: async (request) => ({
+          images: [PNG],
+          model: "gpt-5",
+          effectivePrompt: request.prompt,
+        }),
+      });
+    } finally {
+      stdout.mockRestore();
+      stderr.mockRestore();
+    }
+
+    expect(out.join("")).toBe("");
+    expect(err.join("")).toContain("hero");
+  });
+});
+
 describe("formatDriftReport", () => {
   it("prints one line per drifted asset and nothing for the current ones", () => {
     const report = formatDriftReport([

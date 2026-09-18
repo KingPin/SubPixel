@@ -299,9 +299,9 @@ interface ChildHarvest {
  * stack or a run of retry lines, small enough that a chatty hour-long run cannot
  * turn a log stream into memory pressure.
  */
-const STDERR_KEEP = 8192;
+export const STDERR_KEEP = 8192;
 
-async function collectFromChild(
+export async function collectFromChild(
   child: ChildProcess,
   timeoutMs: number,
   deadline?: Deadline,

@@ -7,6 +7,7 @@ import {
   manifestPathFor,
   readManifest,
   resolveManifestReferences,
+  toPosixPath,
   writeManifest,
 } from "../../src/engine/manifest.js";
 import { ConfigError } from "../../src/core/errors.js";
@@ -91,6 +92,16 @@ describe("the replayable manifest", () => {
     // Read gives back exactly what was recorded. Nothing is resolved until a
     // caller names the root the path has to stay inside.
     expect((await readManifest(image))?.referenceImages).toEqual(["../refs/source.png"]);
+  });
+
+  it("records the separator as / even for a path written on Windows", () => {
+    // The assertion the round-trip test above cannot make. On POSIX `relative()`
+    // already returns forward slashes, so that test passes with the conversion
+    // deleted. A sidecar is committed and replayed on a different machine from the
+    // one that wrote it, and `refs\\source.png` is ONE filename on POSIX.
+    expect(toPosixPath("..\\refs\\source.png", "\\")).toBe("../refs/source.png");
+    // Node accepts `/` on Windows too, so one direction covers both.
+    expect(toPosixPath("../refs/source.png", "\\")).toBe("../refs/source.png");
   });
 
   describe("resolveManifestReferences", () => {

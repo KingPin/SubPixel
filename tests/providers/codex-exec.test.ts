@@ -15,7 +15,9 @@ import {
 import { createDeadline, type Deadline } from "../../src/core/deadline.js";
 import { silentLogger } from "../../src/core/logger.js";
 import {
+  STDERR_KEEP,
   buildCodexArgs,
+  collectFromChild,
   extractImageFromLine,
   extractPathsFromLine,
   generateViaCodexExec,
@@ -469,6 +471,28 @@ describe("generateViaCodexExec", () => {
     expect(error.message).not.toContain("FIRSTLINE");
     // Bounded whatever the child wrote: 40 KB went to stderr above.
     expect(error.message.length).toBeLessThan(600);
+  });
+
+  it("retains a bounded tail of stderr, not the whole stream", async () => {
+    // The test above only proves the 500-character slice at the throw site. It
+    // passes with the accumulator unbounded, which is the half that decides
+    // whether an hour-long chatty run turns a log stream into memory pressure.
+    // `collectFromChild` is exported for this: nothing else can observe it.
+    const script =
+      'process.stderr.write("HEADMARK ");' +
+      'for (let i = 0; i < 64; i++) process.stderr.write("x".repeat(1000));' +
+      'process.stderr.write(" TAILMARK");' +
+      "setTimeout(() => process.exit(1), 50);";
+    const child = spawn(process.execPath, ["-e", script], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const harvest = await collectFromChild(child, 10_000);
+
+    // 64 KB went in.
+    expect(harvest.stderr.length).toBeLessThanOrEqual(STDERR_KEEP);
+    expect(harvest.stderr).toContain("TAILMARK");
+    expect(harvest.stderr).not.toContain("HEADMARK");
   });
 
   it("keeps an image the run saved before it exited non-zero", async () => {

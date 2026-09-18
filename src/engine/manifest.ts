@@ -138,8 +138,20 @@ export async function sidecarIsOursToWrite(
  * contains one. Those sidecars are regenerated, not migrated.
  */
 function toSidecarRelative(imagePath: string, path: string): string {
-  const rel = relative(dirname(resolve(imagePath)), resolve(path));
-  return sep === "/" ? rel : rel.split(sep).join("/");
+  return toPosixPath(relative(dirname(resolve(imagePath)), resolve(path)));
+}
+
+/**
+ * The separator half of `toSidecarRelative`, split out because it is the half a
+ * POSIX test cannot otherwise reach: `relative()` here never returns a backslash,
+ * so the conversion is a no-op on every machine CI runs on and reverting it breaks
+ * nothing anyone would notice until a Windows-written sidecar arrived.
+ *
+ * `from` is the separator the path was written with. It defaults to this platform's
+ * because that is the only answer a caller could give.
+ */
+export function toPosixPath(path: string, from: string = sep): string {
+  return from === "/" ? path : path.split(from).join("/");
 }
 
 /**

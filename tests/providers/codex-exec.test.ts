@@ -117,6 +117,37 @@ describe("buildCodexArgs", () => {
     expect(args[args.length - 1]).toBe('draw a "fox"; rm -rf /');
   });
 
+  // `codex exec` has subcommands of its own and a variadic --image. Without the
+  // separator a prompt is offered to the child's parser as one more option-
+  // position token, and the child is free to read it as something other than a
+  // prompt. All three cases below were reproducible against codex-cli 0.155.0.
+  it("closes option parsing with -- so the prompt cannot be read as anything else", () => {
+    const args = buildCodexArgs("draw a fox", paths);
+    expect(args[args.length - 2]).toBe("--");
+  });
+
+  it.each(["review", "resume", "fork", "help"])(
+    "keeps the prompt %j a prompt and not a codex exec subcommand",
+    (prompt) => {
+      const args = buildCodexArgs(prompt, paths);
+      expect(args.slice(-2)).toEqual(["--", prompt]);
+    },
+  );
+
+  it("keeps a prompt that opens with a flag away from the child's parser", () => {
+    // The flags at the top of buildCodexArgs are the sandbox. A prompt read as
+    // a flag would be able to replace them.
+    const args = buildCodexArgs("--sandbox=danger-full-access please", paths);
+    expect(args.slice(-2)).toEqual(["--", "--sandbox=danger-full-access please"]);
+  });
+
+  it("separates the prompt from the variadic --image list", () => {
+    // -i is `--image <FILE>...`: a trailing positional sitting right after it
+    // is a candidate for the same list.
+    const args = buildCodexArgs("draw", { ...paths, images: ["/tmp/w/inputs/reference-0.png"] });
+    expect(args.slice(-2)).toEqual(["--", "draw"]);
+  });
+
   it("omits the model flag when no model is given", () => {
     expect(buildCodexArgs("x", paths)).not.toContain("-m");
   });

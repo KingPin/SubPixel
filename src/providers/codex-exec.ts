@@ -126,8 +126,14 @@ export function buildCodexArgs(prompt: string, options: CodexArgPaths): string[]
   // below are the belt to its braces.
   for (const image of options.images ?? []) args.push("-i", image);
   if (options.model) args.push("-m", options.model);
-  // Last: the prompt is argv, not shell input, so no quoting is required.
-  args.push(prompt);
+  // Last, and behind `--`. The prompt is argv rather than shell input, so no
+  // quoting is required, but option parsing still has to be closed off first:
+  // `codex exec` carries its own subcommands (`resume`, `fork`, `review`,
+  // `help`) and `--image` is variadic, so a bare trailing positional can be
+  // read as either one. Verified against codex-cli 0.155.0, where the prompt
+  // "review" ran the review subcommand and a prompt beginning `--sandbox=`
+  // would reach the child's own parser and undo the hardening above.
+  args.push("--", prompt);
   return args;
 }
 

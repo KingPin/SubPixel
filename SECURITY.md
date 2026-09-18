@@ -21,8 +21,20 @@ Worth knowing before you report, and worth knowing if you are just reading the c
   lose a token to a half-written file. It reads and rewrites that one path and no other.
 - **Redaction.** Everything subpixel logs or puts in an error message goes through
   `redact()` (`src/core/redact.ts`), which masks JWTs, `sk-` keys, `Bearer` headers,
-  and the JSON fields that hold tokens. A report that a credential reached stdout,
-  stderr, a manifest, or an MCP response is a valid vulnerability — please send it.
+  and the JSON fields that hold tokens. A report that one of **subpixel's own**
+  credentials reached stdout, stderr, a manifest, or an MCP response is a valid
+  vulnerability — please send it.
+
+  Those four shapes are chosen to cover what subpixel itself handles: the ChatGPT
+  access and refresh tokens in `auth.json`, both JWTs, and the headers they travel
+  in. `redact()` is a last line of defence over text that should not have contained
+  a credential in the first place, not a general secret scanner, and it is not
+  claimed to be one. It does not know the prefixes used by GitHub, AWS, Slack, or
+  anyone else, so a third-party key that you paste into a prompt is written to the
+  manifest beside your image as ordinary prompt text. The JSON-field pattern also
+  stops at the first `"` in a value, so a token containing an escaped quote is
+  masked only up to that point. Neither is a vulnerability in subpixel; both are
+  worth knowing before you paste something into a prompt.
 - **Network.** subpixel itself makes requests to exactly two hosts: generation goes to
   `chatgpt.com/backend-api/codex`, token refresh to `auth.openai.com`. Those two URLs
   are the only ones in the source. The `exec` backend additionally spawns the `codex`

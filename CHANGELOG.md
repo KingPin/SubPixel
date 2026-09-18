@@ -27,7 +27,9 @@ version had. Those changes are listed under **Changed** with what they affect.
   credential but it is a stable identifier for a paying account, and the paths
   carry the user's name and the shape of their disk. The MCP view drops the
   account id and reduces paths to basenames, which keeps the whole diagnosis and
-  withholds only the address.
+  withholds only the address. That covers the free-text fields too: both the auth
+  problem and the install problem are built out of paths, so masking the path
+  fields alone would have left the path in the sentence beside them.
 - **`spx doctor` and `spx models` write through `redact()`.** Every other command
   in the CLI already did. `doctor` reads `auth.json` and reports what went wrong
   with it, which makes it the command with the most to spill, not the least.

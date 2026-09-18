@@ -4,7 +4,7 @@ import { chmod, mkdtemp, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const run = promisify(execFile);
 const BIN = resolve("dist/cli/bin.js");
@@ -43,5 +43,28 @@ describe.runIf(built)("installed binary", () => {
       (err: { stdout?: string }) => ({ stdout: err.stdout ?? "" }),
     );
     expect(stdout.startsWith("{")).toBe(true);
+  });
+});
+
+describe("bin bootstrap", () => {
+  it("installs the broken-pipe guard only on stdout", async () => {
+    vi.resetModules();
+    const ignoreEpipe = vi.fn();
+    const main = vi.fn().mockResolvedValue(undefined);
+    vi.doMock("../../src/cli/exit.js", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../../src/cli/exit.js")>()),
+      ignoreEpipe,
+    }));
+    vi.doMock("../../src/cli/index.js", () => ({ main }));
+    try {
+      await import("../../src/cli/bin.js");
+      expect(ignoreEpipe).toHaveBeenCalledTimes(1);
+      expect(ignoreEpipe).toHaveBeenCalledWith(process.stdout);
+    } finally {
+      vi.doUnmock("../../src/cli/exit.js");
+      vi.doUnmock("../../src/cli/index.js");
+      vi.resetModules();
+      vi.restoreAllMocks();
+    }
   });
 });

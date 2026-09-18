@@ -410,6 +410,15 @@ describe("generateViaCodexExec", () => {
     // timer, so without an explicit kill this process returns while `codex exec`
     // carries on generating and billing.
     let child: ReturnType<typeof spawn> | undefined;
+    // The child's own `spawn` event, not a timer. The provider registers its
+    // listeners synchronously in the tick `spawnFn` returns, and Node reports the
+    // fork after that, so this is the first moment the error is certain to be
+    // seen -- and it stays the first moment on a loaded CI box.
+    let forked = (): void => {};
+    const spawned = new Promise<void>((resolve) => {
+      forked = resolve;
+    });
+
     const err = generateViaCodexExec(
       { prompt: "a fox" },
       {
@@ -418,21 +427,24 @@ describe("generateViaCodexExec", () => {
           child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
             stdio: ["ignore", "pipe", "pipe"],
           });
+          child.once("spawn", forked);
           return child;
         }) as never,
       },
     ).catch((e: unknown) => e);
 
-    const exited = new Promise<void>((done) => {
-      setTimeout(() => {
-        child?.on("exit", () => done());
-        child?.emit("error", new Error("the pipe broke"));
-      }, 25);
-    });
+    await spawned;
+    child?.emit("error", new Error("the pipe broke"));
 
-    await err;
-    await exited;
-    expect(child?.killed).toBe(true);
+    try {
+      await err;
+      expect(child?.killed).toBe(true);
+    } finally {
+      // The leak guard, not the assertion. If the provider did not kill the child
+      // the test has already failed, and this is what stops the failure leaving a
+      // node process behind for the rest of the suite.
+      child?.kill("SIGKILL");
+    }
   });
 
   it("reports the tail of a long stderr, bounded, not the head", async () => {

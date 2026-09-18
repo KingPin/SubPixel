@@ -162,6 +162,9 @@ describe("spx regen", () => {
     const project = join(dir, "project");
     await mkdir(join(project, "refs"), { recursive: true });
     await mkdir(join(project, "images", "refs"), { recursive: true });
+    // Marks the project boundary. Without it the reference above `images/` is
+    // outside every directory this replay can prove belongs to the project.
+    await writeFile(join(project, "package.json"), "{}");
     const real = join(project, "refs", "source.png");
     await writeFile(real, tinyPng());
     await writeFile(join(project, "images", "refs", "source.png"), tinyPng());
@@ -183,6 +186,48 @@ describe("spx regen", () => {
 
     const [request] = generate.mock.calls[0] as [{ referenceImages?: string[] }];
     expect(request.referenceImages).toEqual([real]);
+  });
+
+  it("refuses to replay a reference from outside the project, and spends nothing", async () => {
+    // The sidecar arrives with the image — a pull request, a cache, a colleague —
+    // and names a file the user never offered. Replaying it would upload it.
+    const project = join(dir, "project");
+    await mkdir(join(project, "images"), { recursive: true });
+    await writeFile(join(project, "package.json"), "{}");
+    const outsider = join(dir, "private", "scan.png");
+    await mkdir(join(dir, "private"), { recursive: true });
+    await writeFile(outsider, tinyPng());
+
+    const image = join(project, "images", "hero.png");
+    await writeFile(image, tinyPng());
+    await writeManifest(image, { ...ENTRY, referenceImages: [outsider] });
+
+    await expect(runRegen(image, {})).rejects.toThrow(
+      /replay reference images from inside the project/,
+    );
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it("allows a reference beside the image when nothing marks a project root", async () => {
+    const loose = join(dir, "loose");
+    await mkdir(loose, { recursive: true });
+    const reference = join(loose, "source.png");
+    await writeFile(reference, tinyPng());
+
+    const image = join(loose, "hero.png");
+    await writeFile(image, tinyPng());
+    await writeManifest(image, { ...ENTRY, referenceImages: [reference] });
+    generatedAt(image);
+
+    silence();
+    try {
+      await runRegen(image, {});
+    } finally {
+      vi.restoreAllMocks();
+    }
+
+    const [request] = generate.mock.calls[0] as [{ referenceImages?: string[] }];
+    expect(request.referenceImages).toEqual([reference]);
   });
 
   it("exits 2 without a provider call when the manifest is missing", async () => {

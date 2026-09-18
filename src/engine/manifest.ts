@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
-import { atomicPublish, atomicWrite } from "../core/fsx.js";
-import { OutputError } from "../core/errors.js";
+import { basename, dirname, relative, resolve, sep } from "node:path";
+import { atomicPublish, atomicWrite, within } from "../core/fsx.js";
+import { ConfigError, OutputError } from "../core/errors.js";
 import { redact } from "../core/redact.js";
 import {
   BACKEND_NAMES,
@@ -63,8 +63,9 @@ export interface ManifestEntry {
    */
   style?: StyleDefinition;
   /**
-   * Reference image paths, stored RELATIVE TO THE SIDECAR and resolved back to
-   * absolute on read. See `toSidecarRelative` for why.
+   * Reference image paths, stored RELATIVE TO THE SIDECAR with `/` separators.
+   * `readManifest` returns them as recorded; `resolveManifestReferences` turns them
+   * into absolute paths a replay may open. See `toSidecarRelative` for why.
    */
   referenceImages?: string[];
   /**
@@ -117,20 +118,69 @@ export async function sidecarIsOursToWrite(
 }
 
 /**
- * A reference path as it must live on disk: relative to the sidecar's directory.
+ * A reference path as it must live on disk: relative to the sidecar's directory,
+ * with `/` separators whatever platform wrote it.
  *
  * A path "as typed" is relative to whatever directory `spx generate` ran in, and
  * nothing on disk records that directory. `readImageFile()` resolves against the
  * REPLAY process's cwd, so a manifest holding `refs/source.png` read from a
  * different directory either fails while the real reference still exists, or finds
  * a different file of the same name and overwrites the image with it.
+ *
+ * The separator is normalised because a sidecar travels: it is committed, pulled,
+ * and replayed on a different machine from the one that wrote it. `refs\source.png`
+ * written on Windows is ONE filename on POSIX, so the replay silently looks for a
+ * file that does not exist. Node accepts `/` on Windows too, so one direction of
+ * normalisation covers both.
+ *
+ * ponytail: write-side only. A sidecar already written on Windows still carries
+ * backslashes, and rewriting them here would corrupt a POSIX filename that legally
+ * contains one. Those sidecars are regenerated, not migrated.
  */
 function toSidecarRelative(imagePath: string, path: string): string {
-  return relative(dirname(resolve(imagePath)), resolve(path));
+  const rel = relative(dirname(resolve(imagePath)), resolve(path));
+  return sep === "/" ? rel : rel.split(sep).join("/");
 }
 
-function fromSidecarRelative(imagePath: string, path: string): string {
-  return isAbsolute(path) ? path : resolve(dirname(resolve(imagePath)), path);
+/**
+ * Turn the recorded reference paths into absolute ones a replay can read, refusing
+ * any that leave `projectDir`.
+ *
+ * This is deliberately NOT part of `readManifest`. A sidecar is attacker-reachable
+ * input — it arrives over a pull request, out of a cache, from a colleague — and
+ * `spx regen` hands these paths to the reference loader, which base64-encodes the
+ * bytes and posts them upstream. A sidecar naming `/home/dev/Pictures/scan.png` or
+ * `../../../secrets/id_rsa.png` therefore exfiltrates a file the user never chose
+ * to send, on a command whose whole promise is "make that image again".
+ *
+ * Every other reference path in the tool is already confined: `assets.yml` through
+ * `within()` in the asset loader, MCP arguments through `within()` at the tool
+ * boundary. This closes the third door with the same call.
+ *
+ * Splitting it from `readManifest` is what makes that durable. Reading a sidecar for
+ * inspection needs no root and gets no absolute paths; obtaining a path a replay can
+ * actually open requires naming the root it must stay inside. A future caller cannot
+ * reach the dangerous form without answering the question.
+ */
+export function resolveManifestReferences(
+  imagePath: string,
+  projectDir: string,
+  paths: readonly string[],
+): string[] {
+  const sidecarDir = dirname(resolve(imagePath));
+  return paths.map((path) => {
+    try {
+      return within(projectDir, resolve(sidecarDir, path), `${basename(manifestPathFor(imagePath))} referenceImages`);
+    } catch (err) {
+      if (!(err instanceof ConfigError)) throw err;
+      throw new ConfigError(
+        `${err.message} A sidecar may only replay reference images from inside the project, ` +
+          "because replaying one uploads it. Copy the reference into the project and regenerate, " +
+          "or run `spx generate` with an explicit --image.",
+        err,
+      );
+    }
+  });
 }
 
 /**
@@ -310,8 +360,9 @@ export function isManifestEntry(value: unknown): value is ManifestEntry {
 /**
  * Read the sidecar beside an image, or `undefined` when there is not a valid one.
  *
- * Reference paths come back ABSOLUTE, resolved against the sidecar's own directory,
- * so a caller can replay them from any working directory.
+ * Reference paths come back EXACTLY AS RECORDED — relative to the sidecar, and not
+ * yet checked against anything. Call `resolveManifestReferences` to get paths a
+ * replay may open; see there for why the two steps are separate.
  */
 export async function readManifest(
   imagePath: string,
@@ -322,12 +373,5 @@ export async function readManifest(
   } catch {
     return undefined;
   }
-  if (!isManifestEntry(parsed)) return undefined;
-  if (!parsed.referenceImages) return parsed;
-  return {
-    ...parsed,
-    referenceImages: parsed.referenceImages.map((p) =>
-      fromSidecarRelative(imagePath, p),
-    ),
-  };
+  return isManifestEntry(parsed) ? parsed : undefined;
 }

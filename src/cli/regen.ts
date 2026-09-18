@@ -1,8 +1,14 @@
-import { resolve } from "node:path";
+import { access } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
 import { loadConfig } from "../config/load.js";
 import { ConfigError } from "../core/errors.js";
 import type { GenerateRequest } from "../core/types.js";
-import { MANIFEST_VERSION, manifestPathFor, readManifest } from "../engine/manifest.js";
+import {
+  MANIFEST_VERSION,
+  manifestPathFor,
+  readManifest,
+  resolveManifestReferences,
+} from "../engine/manifest.js";
 import type { ManifestEntry } from "../engine/manifest.js";
 import { runGenerateRequest, type GenerateCliOptions } from "./generate.js";
 import { resolveStyle } from "./styles.js";
@@ -27,6 +33,44 @@ export interface RegenCliOptions {
 }
 
 /**
+ * The directory a sidecar's reference images must stay inside.
+ *
+ * Anchored on the IMAGE, not on the shell. A sidecar's whole promise is that it
+ * replays the same way from any working directory, so a root taken from `cwd` would
+ * make one sidecar legal in one terminal and a security refusal in another — and the
+ * confinement would be decided by where the user happened to be standing rather than
+ * by what the project contains.
+ *
+ * Any of the three markers ends the walk, because all three mean "a human drew a
+ * boundary here". Falling back to the image's own directory when there is no marker
+ * at all is the conservative answer: with nothing declaring a project, the only
+ * directory known to be involved is the one the image is in.
+ *
+ * ponytail: marker list, not a VCS query. A project rooted by something else — a
+ * go.mod, a Cargo.toml — confines to the image's directory until its marker is added
+ * here, and says so when it refuses.
+ */
+const ROOT_MARKERS = ["subpixel.config.json", "package.json", ".git"];
+
+export async function projectRootFor(imagePath: string): Promise<string> {
+  const start = dirname(resolve(imagePath));
+  let dir = start;
+  for (;;) {
+    for (const marker of ROOT_MARKERS) {
+      try {
+        await access(join(dir, marker));
+        return dir;
+      } catch {
+        // Not this directory. Try the next marker, then the parent.
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return start;
+    dir = parent;
+  }
+}
+
+/**
  * Rebuild the request that produced an image from its sidecar manifest.
  *
  * Exported for the tests: this is where a v1 manifest's absent fields turn into an
@@ -34,6 +78,7 @@ export interface RegenCliOptions {
  */
 export function requestFromManifest(
   imagePath: string,
+  projectDir: string,
   manifest: ManifestEntry,
   options: RegenCliOptions,
   style: ReturnType<typeof resolveStyle>,
@@ -50,9 +95,12 @@ export function requestFromManifest(
     // format this replay has to reproduce for the file to land on the same path.
     format: manifest.format,
     model: options.model ?? manifest.model,
-    // `readManifest` already resolved these against the sidecar's own directory, so
-    // the replay reads the same files whatever directory it runs in.
-    referenceImages: manifest.referenceImages,
+    // Resolved against the sidecar's own directory, so the replay reads the same
+    // files whatever directory it runs in, and confined to the project, because
+    // replaying a reference uploads it and the sidecar is not a trusted document.
+    referenceImages: manifest.referenceImages
+      ? resolveManifestReferences(imagePath, projectDir, manifest.referenceImages)
+      : undefined,
     variants: manifest.variantSpecs,
     // A `--style` flag replaces the recorded definition wholesale. Merging a named
     // style into a recorded one would produce a third style that neither the
@@ -86,7 +134,13 @@ export async function runRegen(image: string, options: RegenCliOptions): Promise
 
   const { config } = await loadConfig({ warn });
   const style = resolveStyle(config, options.style);
-  const request = requestFromManifest(imagePath, manifest, options, style);
+  const request = requestFromManifest(
+    imagePath,
+    await projectRootFor(imagePath),
+    manifest,
+    options,
+    style,
+  );
 
   await runGenerateRequest(request, {
     ...options,

@@ -9,6 +9,7 @@ dist/
 # Local agent/assistant working files: plans, specs, reviews, tool settings.
 .claude/
 docs/superpowers/
+docs/reviews/
 
 # Local-only scratch: third-party clones kept as design source material.
 # Nothing in here is vendored or tracked.

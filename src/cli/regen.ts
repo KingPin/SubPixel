@@ -1,6 +1,6 @@
 import { access } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { loadConfig } from "../config/load.js";
+import { findConfigFile, loadConfig } from "../config/load.js";
 import { ConfigError } from "../core/errors.js";
 import type { GenerateRequest } from "../core/types.js";
 import {
@@ -50,19 +50,38 @@ export interface RegenCliOptions {
  * go.mod, a Cargo.toml — confines to the image's directory until its marker is added
  * here, and says so when it refuses.
  */
-const ROOT_MARKERS = ["subpixel.config.json", "package.json", ".git"];
-
+/**
+ * The directory a sidecar's reference images have to stay inside.
+ *
+ * Anchored on the IMAGE, not the shell. A sidecar records its references relative
+ * to itself and promises to replay from any working directory, so the root cannot
+ * come from `process.cwd()` without breaking that promise.
+ *
+ * `findConfigFile` decides it, which is the same walk every other part of the tool
+ * uses to answer "which project is this". Asking it here rather than keeping a
+ * second list of marker files is the point: two definitions of a project root
+ * disagree eventually, and the one that disagrees here rejects a reference the
+ * config in force considers perfectly local. That walk steps over a `package.json`
+ * with no `subpixel` key on purpose — a monorepo package almost always has one,
+ * and the project is the repository above it.
+ *
+ * A tree with no subpixel config at all falls back to its `.git` root, and an image
+ * outside even that is its own root, which still confines a reference to the
+ * directory the image sits in.
+ */
 export async function projectRootFor(imagePath: string): Promise<string> {
   const start = dirname(resolve(imagePath));
+
+  const found = await findConfigFile(start);
+  if (found) return dirname(found.path);
+
   let dir = start;
   for (;;) {
-    for (const marker of ROOT_MARKERS) {
-      try {
-        await access(join(dir, marker));
-        return dir;
-      } catch {
-        // Not this directory. Try the next marker, then the parent.
-      }
+    try {
+      await access(join(dir, ".git"));
+      return dir;
+    } catch {
+      // Not a repository root. Try the parent.
     }
     const parent = dirname(dir);
     if (parent === dir) return start;

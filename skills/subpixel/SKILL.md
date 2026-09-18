@@ -11,9 +11,16 @@ returns the same file rather than a second charge.
 
 ## Before anything else
 
-Run `spx doctor`. It reports credentials, the driver model, and whether `sharp` is
+Run `spx doctor`, or `spx doctor --json` when you want to read the answer
+programmatically. It reports credentials, the driver model, and whether `sharp` is
 installed. Exit 1 means the setup is incomplete, and every generation will fail the
-same way until it is fixed.
+same way until it is fixed. Lines marked `warn` are advisory and do not stop a
+generation; only `FAIL` does.
+
+**Every generation costs subscription quota.** A bare argument containing a space is
+shorthand for `spx generate`, so `spx "a red fox"` spends money exactly as
+`spx generate "a red fox"` does. Use `--dry-run` to see the resolved plan and spend
+nothing.
 
 ## Generating
 
@@ -26,7 +33,17 @@ The path of each written file goes to stdout, one per line. Everything else goes
 stderr, so `spx generate "..." > path.txt` gives you a path and nothing else.
 
 Add `--json` when you want the sha256, the dimensions, and a ready-made `alt` string
-instead of just the path.
+instead of just the path. It also carries `"cached": true` when the image came from
+the cache and cost nothing; the progress line on stderr says `done (cached)` for the
+same reason.
+
+Useful flags beyond the ones below:
+
+- `-o public/img/hero.webp` writes to exactly that file, instead of a derived name.
+- `--image ref.png` attaches a reference image. Repeat it for several.
+- `--style brand` applies a named style from the project config. `spx styles` lists
+  what the project defines and `spx styles brand` shows one resolved.
+- `--dry-run` prints the resolved plan and exits without spending anything.
 
 ### Set the timeout to maximum
 
@@ -58,6 +75,29 @@ spx edit public/img/hero.webp "make the sky orange"
 This is re-generation guided by the original as a reference. It is **not** in-place
 pixel editing: the result is a new image in the same spirit, and details not
 mentioned in the instruction may still move. Say so when you hand the result back.
+
+## Regenerating
+
+```bash
+spx regen public/img/hero.webp                    # replay the recorded request
+spx regen public/img/hero.webp --size 1024x1024   # replay it with one thing changed
+```
+
+Every image subpixel writes gets a `.json` sidecar beside it recording the whole
+request. `spx regen` replays that, ignores the cache, and writes over the original.
+Use it when a file was lost or a single parameter needs changing; do not reconstruct
+the prompt by hand.
+
+## Icons and favicons
+
+```bash
+spx icons logo.png --out-dir public
+```
+
+Writes the whole favicon and PWA pack from one source image: `favicon.ico` plus the
+16, 32, 180, 192 and 512 pixel PNGs. This is local resizing, not generation — it
+costs nothing and needs `sharp`. Generate the source mark first with `spx generate`
+if the project has none.
 
 ## Declared assets
 

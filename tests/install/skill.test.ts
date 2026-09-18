@@ -54,6 +54,25 @@ describe("the bundled skill", () => {
     expect((await skill()).body).toMatch(/read the generated file back into context/i);
   });
 
+  it("shows the commands its description promises", async () => {
+    const { body } = await skill();
+    // The description triggers on "an app icon or favicon pack" and on assets.yml.
+    // A trigger the body never answers is worse than no trigger: the agent reaches
+    // for subpixel and then invents a command line, which is how `spx favicon` and
+    // other spellings that do not exist end up being run.
+    for (const command of ["spx icons", "spx sync", "spx regen", "spx edit", "spx styles"]) {
+      expect(body, command).toContain(command);
+    }
+  });
+
+  it("says that a bare prompt is a purchase", async () => {
+    const { body } = await skill();
+    // `spx "a red fox"` is shorthand for `spx generate`, and an agent that reads the
+    // shorthand as a query rather than an order spends real quota finding out.
+    expect(body).toMatch(/costs subscription quota/i);
+    expect(body).toContain("--dry-run");
+  });
+
   it("ships the terms-of-service refusal", async () => {
     const { body } = await skill();
     const { TOS_NOTICE } = await import("../../src/cli/doctor.js");

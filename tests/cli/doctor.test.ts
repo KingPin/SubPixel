@@ -101,6 +101,46 @@ describe("formatDoctorReport", () => {
     expect(text).toContain("Model");
     expect(text).not.toContain("rt_secret_value_here");
   });
+
+  // FAIL has one meaning: this is the row that made `report.ok` false, and so the row
+  // that made the command exit 1. Agents grep for it. An editor that has not had
+  // `spx init` run, a missing `codex` binary and a nearly-spent allowance are all worth
+  // reading and none of them stops an image being generated, so they get `warn`.
+  it("reserves FAIL for the row that made the report fail", async () => {
+    const fresh = await mkdtemp(join(tmpdir(), "subpixel-doctor-marks-"));
+    const quotaPath = join(fresh, "quota.json");
+    await writeFile(
+      quotaPath,
+      JSON.stringify({
+        planType: "plus",
+        observedAt: new Date().toISOString(),
+        windows: [{ usedPercent: 96, windowMinutes: 300 }],
+      }),
+    );
+    const report = await collectDoctorReport({
+      cwd: fresh,
+      home,
+      env: {},
+      authPath: await seedAuth(),
+      cachePath: join(home, "missing.json"),
+      quotaPath,
+    });
+    expect(report.ok).toBe(true);
+    const text = formatDoctorReport(report);
+    expect(text).not.toContain("FAIL");
+    expect(text).toContain("warn codex");
+    expect(text).toContain("warn init");
+    expect(text).toMatch(/warn .*96%/);
+  });
+
+  it("marks the row that made the report fail", async () => {
+    const report = await collectDoctorReport({
+      authPath: join(home, "nope.json"),
+      cachePath: join(home, "missing.json"),
+    });
+    expect(report.ok).toBe(false);
+    expect(formatDoctorReport(report)).toContain("FAIL Auth");
+  });
 });
 
 describe("collectDoctorReport quota reporting", () => {

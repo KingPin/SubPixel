@@ -2,7 +2,12 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { collectDoctorReport, formatDoctorReport } from "../../src/cli/doctor.js";
+import {
+  collectDoctorReport,
+  formatDoctorReport,
+  publicDoctorReport,
+  type DoctorReport,
+} from "../../src/cli/doctor.js";
 import { applyInit, planInit } from "../../src/install/init.js";
 
 let home: string;
@@ -197,5 +202,56 @@ describe("the install section", () => {
   it("counts the tools `spx mcp` declares", async () => {
     const fresh = await mkdtemp(join(tmpdir(), "subpixel-doctor-init-"));
     expect((await report(fresh)).mcp.tools).toBeGreaterThan(0);
+  });
+});
+
+describe("publicDoctorReport", () => {
+  const REPORT: DoctorReport = {
+    ok: false,
+    node: "v24.0.0",
+    codexBinary: undefined,
+    sharp: true,
+    auth: { path: "/home/tester/.codex/auth.json", present: false },
+    model: { slug: "gpt-5.6-sol", source: "cache" },
+    config: { styles: 0 },
+    quota: { summary: "no reading yet", warn: false, stale: true },
+    install: { ok: false, configured: [], pending: [], conflicts: [] },
+    mcp: { tools: 1 },
+    notice: "a notice",
+  };
+
+  const withProblem = (problem: string): string | undefined =>
+    publicDoctorReport({ ...REPORT, install: { ...REPORT.install, problem } }).install.problem;
+
+  // `install.problem` is whatever `planInit` threw, so the path in it belongs to
+  // whichever machine and package manager put subpixel there. Each message below is
+  // one Node writes, and the name inside it is what the projection exists to
+  // withhold. The posix-with-a-space case is the one a stop-at-whitespace pattern
+  // gets wrong: it publishes the first name and drops the rest.
+  it.each([
+    ["a posix path", "open '/home/tester/.local/share/subpixel/SKILL.md'", "tester"],
+    ["a posix path with a space", "open '/Users/Jane Doe/.local/subpixel/SKILL.md'", "Jane"],
+    ["a windows drive path", "open 'C:\\Users\\Jane Doe\\AppData\\subpixel\\SKILL.md'", "Jane"],
+    ["a UNC path", "open '//nas/team share/subpixel/SKILL.md'", "nas"],
+  ])("reduces %s to its filename", (_name, message, secret) => {
+    const problem = withProblem(`ENOENT: no such file or directory, ${message}`);
+    expect(problem).toBe("ENOENT: no such file or directory, open 'SKILL.md'");
+    expect(problem).not.toContain(secret);
+  });
+
+  it("leaves a message with no path in it alone", () => {
+    expect(withProblem("the bundled skill is empty")).toBe("the bundled skill is empty");
+  });
+
+  it("withholds the account id and the disk from every field at once", () => {
+    const masked = publicDoctorReport({
+      ...REPORT,
+      codexBinary: "/home/tester/.local/bin/codex",
+      auth: { ...REPORT.auth, accountId: "acct-1a2b3c4d" },
+      config: { path: "/home/tester/work/acme/subpixel.config.json", styles: 2 },
+    });
+    expect(JSON.stringify(masked)).not.toContain("/home/tester");
+    expect(JSON.stringify(masked)).not.toContain("acct-1a2b3c4d");
+    expect(masked.codexBinary).toBe("codex");
   });
 });

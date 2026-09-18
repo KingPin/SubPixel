@@ -175,6 +175,14 @@ function shorten(text: string, path: string): string {
   return text.split(path).join(basename(path));
 }
 
+/**
+ * The last segment of one path, whichever platform spelled it.
+ *
+ * `basename` is this platform's, and the text being scrubbed is not necessarily
+ * from this platform: a Windows error names `C:\Users\...` and `posix.basename`
+ * would hand back the whole thing as one segment. Dispatch on the root, not on the
+ * separators inside, because a backslash is a legal character in a POSIX filename.
+ */
 function pathLeaf(path: string): string {
   if (/^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\")) return win32.basename(path);
   return posix.basename(path);
@@ -188,9 +196,23 @@ function pathLeaf(path: string): string {
  * inside the installed package, or a writer target under the user's home -- and
  * which one it is depends on how subpixel was installed.
  *
- * Node tends to quote the whole path when it contains spaces, and Windows errors
- * spell absolute paths with drive letters or UNC roots. Match the quoted forms
- * first so spaces stay inside the path, then the unquoted fallbacks.
+ * Quoted forms first, because a path is the one thing in these messages that can
+ * contain a space: Node quotes the whole path in an ENOENT, and stopping at the
+ * first space in `/Users/Jane Doe/...` would publish the half that names the user.
+ * The unquoted alternatives run second and cover the POSIX, drive-letter and UNC
+ * roots.
+ *
+ * None of these can backtrack. Every alternative is a literal root followed by one
+ * `+` over a character class that excludes its own terminator, so each has exactly
+ * one way to match at a given position.
+ *
+ * ponytail: an UNQUOTED path with a space still leaks the segment the space splits.
+ * `/Users/Jane Doe/x` becomes `Jane Doex`, which is the first name -- the exact
+ * thing this function exists to withhold. Every message that reaches
+ * `install.problem` is a Node fs error, and those quote the path they name, so the
+ * shape is unreached rather than handled. The fix if one ever turns up is to
+ * replace the home directory with `~` before matching, which needs a `home` this
+ * pure function is not given.
  */
 function shortenPaths(text: string): string {
   return text

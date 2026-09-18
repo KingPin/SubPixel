@@ -254,6 +254,26 @@ which harnesses are still waiting for `spx init`. Neither affects the exit code 
 unconfigured editor cannot stop an image being generated. `doctor` exits 1 only when
 the credentials are unusable.
 
+## The cache
+
+Every run hashes the inputs that change the picture — prompt, size, quality,
+background, format, exact size, style, transparency, and the *contents* of each
+reference image — and serves a byte-identical hit without calling the backend.
+A hit says `done (cached)` on the progress line and sets `"cached": true` under
+`--json`, so an agent can tell a free result from a paid one.
+
+The driver model is deliberately **not** part of that hash. It rotates whenever
+OpenAI ships a new one, and hashing it would invalidate every image you already
+have on the day that happens, at your expense. The model that drew each image is
+recorded in its sidecar manifest instead.
+
+Reference images are hashed by their contents rather than their paths, so moving a
+reference does not invalidate the cache and editing one does.
+
+The cache lives in `.subpixel/` in the working directory, beside the quota reading
+and the run locks. Deleting it costs nothing but the next regeneration. `--no-cache`
+skips the lookup for one request, and `spx regen` always does.
+
 ## subpixel.config.json
 
 Discovered by walking up from the working directory. `package.json#subpixel` works

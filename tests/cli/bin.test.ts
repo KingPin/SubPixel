@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, mkdtemp, symlink } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 const run = promisify(execFile);
 const BIN = resolve("dist/cli/bin.js");
@@ -46,25 +46,17 @@ describe.runIf(built)("installed binary", () => {
   });
 });
 
-describe("bin bootstrap", () => {
-  it("installs the broken-pipe guard only on stdout", async () => {
-    vi.resetModules();
-    const ignoreEpipe = vi.fn();
-    const main = vi.fn().mockResolvedValue(undefined);
-    vi.doMock("../../src/cli/exit.js", async (importOriginal) => ({
-      ...(await importOriginal<typeof import("../../src/cli/exit.js")>()),
-      ignoreEpipe,
-    }));
-    vi.doMock("../../src/cli/index.js", () => ({ main }));
-    try {
-      await import("../../src/cli/bin.js");
-      expect(ignoreEpipe).toHaveBeenCalledTimes(1);
-      expect(ignoreEpipe).toHaveBeenCalledWith(process.stdout);
-    } finally {
-      vi.doUnmock("../../src/cli/exit.js");
-      vi.doUnmock("../../src/cli/index.js");
-      vi.resetModules();
-      vi.restoreAllMocks();
+describe("the bootstrap", () => {
+  it("guards both output streams against a closed pipe", async () => {
+    // Read as text, because bin.ts calls `main()` the moment it is imported. What is
+    // being pinned is that BOTH streams are guarded: `spx generate ... 2>&1 | head -1`
+    // is one pipe wearing two descriptors, so when `head` leaves, the progress lines
+    // on stderr raise EPIPE exactly as the path on stdout does, and an unguarded
+    // stderr turns a run that finished into a stack trace and exit 1. The stderr line
+    // has been dropped once in review already, which is why it is worth a test.
+    const source = await readFile(resolve("src/cli/bin.ts"), "utf8");
+    for (const stream of ["stdout", "stderr"]) {
+      expect(source, stream).toContain(`ignoreEpipe(process.${stream})`);
     }
   });
 });

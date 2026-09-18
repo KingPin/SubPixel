@@ -24,6 +24,8 @@ const REPORT: DoctorReport = {
   model: { slug: "gpt-5.6-sol", source: "cache" },
   config: { styles: 0 },
   quota: { summary: "no reading yet", warn: false, stale: true },
+  install: { ok: true, configured: [], pending: [], conflicts: [] },
+  mcp: { tools: 1 },
   notice: "a notice",
 };
 
@@ -165,6 +167,14 @@ describe("the read-only tools", () => {
         problem: "/home/tester/.codex/auth.json is not valid JSON. Run `codex login`.",
       },
       config: { path: "/home/tester/work/acme-rebrand/subpixel.config.json", styles: 2 },
+      install: {
+        ...REPORT.install,
+        ok: false,
+        // What a package installed without its skills directory throws. The path is
+        // not one publicDoctorReport knows in advance: it is wherever npm put us.
+        problem:
+          "ENOENT: no such file or directory, open '/home/tester/.local/share/pnpm/global/5/node_modules/subpixel/skills/subpixel/SKILL.md'",
+      },
     } satisfies DoctorReport);
 
     const cli = (await cliJson("doctor", "--json")) as DoctorReport;
@@ -180,6 +190,10 @@ describe("the read-only tools", () => {
     expect(mcp.auth.present).toBe(true);
     expect(mcp.config.styles).toBe(2);
     expect(mcp.auth.problem).toContain("is not valid JSON");
+    // The whole diagnosis survives. Only the address is withheld.
+    expect(mcp.install.problem).toBe(
+      "ENOENT: no such file or directory, open 'SKILL.md'",
+    );
 
     // It names neither the account behind the subscription nor the user's disk.
     expect(mcp.auth).not.toHaveProperty("accountId");

@@ -176,6 +176,23 @@ function shorten(text: string, path: string): string {
 }
 
 /**
+ * Drop the directories from every absolute path in free text.
+ *
+ * `shorten` cannot do this one: the paths are not known at the call site. A
+ * `planInit` failure names whatever file it could not read -- a bundled asset
+ * inside the installed package, or a writer target under the user's home -- and
+ * which one it is depends on how subpixel was installed.
+ *
+ * A path here starts at a `/` and ends at whitespace or a quote, which is where
+ * every path in a Node error message ends. The pattern cannot backtrack: a segment
+ * cannot contain the `/` that starts the next one, so each repetition has exactly
+ * one way to match.
+ */
+function shortenPaths(text: string): string {
+  return text.replace(/\/(?:[^/\s'"]+\/)*([^/\s'"]+)/g, "$1");
+}
+
+/**
  * The doctor report as a model is allowed to see it.
  *
  * `spx doctor` is written for a person looking at their own machine, so it names
@@ -205,6 +222,15 @@ export function publicDoctorReport(report: DoctorReport): DoctorReport {
     config: {
       ...report.config,
       ...(report.config.path !== undefined ? { path: basename(report.config.path) } : {}),
+    },
+    install: {
+      ...report.install,
+      // The other free-text field, and the other one built out of a path. A package
+      // installed without its skills directory puts the absolute path of the missing
+      // file here, which the spread above would otherwise copy out verbatim.
+      ...(report.install.problem !== undefined
+        ? { problem: shortenPaths(report.install.problem) }
+        : {}),
     },
   };
 }

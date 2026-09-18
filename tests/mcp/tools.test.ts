@@ -134,7 +134,7 @@ describe("the tool schemas", () => {
       // rejects arguments a tool does not declare has to ask whether the schema
       // owns the name, not whether anything in its prototype chain answers to it.
       expect(() => validateArgs("generate_image", { prompt: "a fox", [key]: "x" })).toThrow(
-        new RegExp(`has no argument "${key.replace("$", "\\$")}"`),
+        `has no argument "${key}"`,
       );
     },
   );

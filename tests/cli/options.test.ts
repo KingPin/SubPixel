@@ -34,6 +34,26 @@ describe("normalizeArgv", () => {
     expect(normalizeArgv(["node", "spx"])).toEqual(["node", "spx"]);
   });
 
+  it("leaves a single unknown word alone, so a typo cannot buy an image", () => {
+    // The footgun this closes: every one of these used to become
+    // `spx generate <word>` and spend a real generation.
+    for (const typo of ["generat", "cache", "frobnicate", "doctorr"]) {
+      expect(normalizeArgv(["node", "spx", typo])).toEqual(["node", "spx", typo]);
+    }
+  });
+
+  it("leaves a single word alone even when generate flags follow it", () => {
+    // A flag `generate` accepts is not evidence that the word was meant as a
+    // prompt. `spx generat --size 1024x1024` is a misspelling, not an order.
+    expect(normalizeArgv(["node", "spx", "generat", "--size", "1024x1024"])).toEqual([
+      "node",
+      "spx",
+      "generat",
+      "--size",
+      "1024x1024",
+    ]);
+  });
+
   it("keeps the flags that follow a bare prompt", () => {
     expect(normalizeArgv(["node", "spx", "a fox", "--size", "1024x1024"])).toEqual([
       "node",
@@ -84,6 +104,17 @@ describe("parseSeconds", () => {
   it("rejects zero and negative values", () => {
     expect(() => parseSeconds("0", "--stall-timeout")).toThrow(ConfigError);
     expect(() => parseSeconds("-5", "--stall-timeout")).toThrow(ConfigError);
+  });
+});
+
+describe("unknown commands reach commander", () => {
+  it("reports an unknown word instead of generating from it", async () => {
+    const program = (await buildProgram())
+      .exitOverride()
+      .configureOutput({ writeErr: () => {}, writeOut: () => {} });
+    await expect(
+      program.parseAsync(normalizeArgv(["node", "spx", "frobnicate"])),
+    ).rejects.toThrow(/unknown command/i);
   });
 });
 

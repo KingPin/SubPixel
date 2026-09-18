@@ -15,7 +15,9 @@ import {
 import { createDeadline, type Deadline } from "../../src/core/deadline.js";
 import { silentLogger } from "../../src/core/logger.js";
 import {
+  STDERR_KEEP,
   buildCodexArgs,
+  collectFromChild,
   extractImageFromLine,
   extractPathsFromLine,
   generateViaCodexExec,
@@ -115,6 +117,37 @@ describe("buildCodexArgs", () => {
   it("passes the prompt as the final argv element", () => {
     const args = buildCodexArgs('draw a "fox"; rm -rf /', paths);
     expect(args[args.length - 1]).toBe('draw a "fox"; rm -rf /');
+  });
+
+  // `codex exec` has subcommands of its own and a variadic --image. Without the
+  // separator a prompt is offered to the child's parser as one more option-
+  // position token, and the child is free to read it as something other than a
+  // prompt. All three cases below were reproducible against codex-cli 0.155.0.
+  it("closes option parsing with -- so the prompt cannot be read as anything else", () => {
+    const args = buildCodexArgs("draw a fox", paths);
+    expect(args[args.length - 2]).toBe("--");
+  });
+
+  it.each(["review", "resume", "fork", "help"])(
+    "keeps the prompt %j a prompt and not a codex exec subcommand",
+    (prompt) => {
+      const args = buildCodexArgs(prompt, paths);
+      expect(args.slice(-2)).toEqual(["--", prompt]);
+    },
+  );
+
+  it("keeps a prompt that opens with a flag away from the child's parser", () => {
+    // The flags at the top of buildCodexArgs are the sandbox. A prompt read as
+    // a flag would be able to replace them.
+    const args = buildCodexArgs("--sandbox=danger-full-access please", paths);
+    expect(args.slice(-2)).toEqual(["--", "--sandbox=danger-full-access please"]);
+  });
+
+  it("separates the prompt from the variadic --image list", () => {
+    // -i is `--image <FILE>...`: a trailing positional sitting right after it
+    // is a candidate for the same list.
+    const args = buildCodexArgs("draw", { ...paths, images: ["/tmp/w/inputs/reference-0.png"] });
+    expect(args.slice(-2)).toEqual(["--", "draw"]);
   });
 
   it("omits the model flag when no model is given", () => {
@@ -371,6 +404,95 @@ describe("generateViaCodexExec", () => {
     setTimeout(() => controller.abort(), 25);
     expect(await err).toBeInstanceOf(StreamAborted);
     deadline.dispose();
+  });
+
+  it("kills the child when it emits error after the fork succeeded", async () => {
+    // A real, long-lived child, then an `error` event on it. Nothing else is
+    // watching by then: the provider resolves on `error` and clears its kill
+    // timer, so without an explicit kill this process returns while `codex exec`
+    // carries on generating and billing.
+    let child: ReturnType<typeof spawn> | undefined;
+    // The child's own `spawn` event, not a timer. The provider registers its
+    // listeners synchronously in the tick `spawnFn` returns, and Node reports the
+    // fork after that, so this is the first moment the error is certain to be
+    // seen -- and it stays the first moment on a loaded CI box.
+    let forked = (): void => {};
+    const spawned = new Promise<void>((resolve) => {
+      forked = resolve;
+    });
+
+    const err = generateViaCodexExec(
+      { prompt: "a fox" },
+      {
+        model: "m",
+        spawnFn: (() => {
+          child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          child.once("spawn", forked);
+          return child;
+        }) as never,
+      },
+    ).catch((e: unknown) => e);
+
+    await spawned;
+    child?.emit("error", new Error("the pipe broke"));
+
+    try {
+      await err;
+      expect(child?.killed).toBe(true);
+    } finally {
+      // The leak guard, not the assertion. If the provider did not kill the child
+      // the test has already failed, and this is what stops the failure leaving a
+      // node process behind for the rest of the suite.
+      child?.kill("SIGKILL");
+    }
+  });
+
+  it("reports the tail of a long stderr, bounded, not the head", async () => {
+    // codex streams progress and reconnect lines to stderr for as long as a run
+    // lasts. The head of that is whatever it warned about on the way up. The
+    // reason the run failed is the last thing written.
+    const script =
+      'process.stderr.write("FIRSTLINE ");' +
+      'for (let i = 0; i < 200; i++) process.stderr.write("x".repeat(200));' +
+      'process.stderr.write(" THE REAL REASON");' +
+      "setTimeout(() => process.exit(1), 50);";
+    const error = (await generateViaCodexExec(
+      { prompt: "a fox" },
+      {
+        model: "m",
+        spawnFn: (() =>
+          spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "pipe"] })) as never,
+      },
+    ).catch((e: unknown) => e)) as Error;
+
+    expect(error.message).toContain("THE REAL REASON");
+    expect(error.message).not.toContain("FIRSTLINE");
+    // Bounded whatever the child wrote: 40 KB went to stderr above.
+    expect(error.message.length).toBeLessThan(600);
+  });
+
+  it("retains a bounded tail of stderr, not the whole stream", async () => {
+    // The test above only proves the 500-character slice at the throw site. It
+    // passes with the accumulator unbounded, which is the half that decides
+    // whether an hour-long chatty run turns a log stream into memory pressure.
+    // `collectFromChild` is exported for this: nothing else can observe it.
+    const script =
+      'process.stderr.write("HEADMARK ");' +
+      'for (let i = 0; i < 64; i++) process.stderr.write("x".repeat(1000));' +
+      'process.stderr.write(" TAILMARK");' +
+      "setTimeout(() => process.exit(1), 50);";
+    const child = spawn(process.execPath, ["-e", script], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const harvest = await collectFromChild(child, 10_000);
+
+    // 64 KB went in.
+    expect(harvest.stderr.length).toBeLessThanOrEqual(STDERR_KEEP);
+    expect(harvest.stderr).toContain("TAILMARK");
+    expect(harvest.stderr).not.toContain("HEADMARK");
   });
 
   it("keeps an image the run saved before it exited non-zero", async () => {

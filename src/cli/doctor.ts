@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { basename, join, posix, win32 } from "node:path";
 import { authPath, decodeJwtExp, isExpired, readAuth } from "../auth/read.js";
 import { findOnPath } from "../core/fsx.js";
 import { modelCachePath, resolveModel } from "../providers/models.js";
@@ -161,6 +161,107 @@ export async function collectDoctorReport(options: DoctorOptions = {}): Promise<
       observedAt: quotaReading?.observedAt,
     },
     notice: TOS_NOTICE,
+  };
+}
+
+/**
+ * Drop the directories from one known path wherever it appears in free text.
+ *
+ * A literal split/join rather than a pattern. The path is known exactly at every
+ * call site here, and the alternative is a regex over prose that has to guess
+ * where a path ends.
+ */
+function shorten(text: string, path: string): string {
+  return text.split(path).join(basename(path));
+}
+
+/**
+ * The last segment of one path, whichever platform spelled it.
+ *
+ * `basename` is this platform's, and the text being scrubbed is not necessarily
+ * from this platform: a Windows error names `C:\Users\...` and `posix.basename`
+ * would hand back the whole thing as one segment. Dispatch on the root, not on the
+ * separators inside, because a backslash is a legal character in a POSIX filename.
+ */
+function pathLeaf(path: string): string {
+  if (/^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\")) return win32.basename(path);
+  return posix.basename(path);
+}
+
+/**
+ * Drop the directories from every absolute path in free text.
+ *
+ * `shorten` cannot do this one: the paths are not known at the call site. A
+ * `planInit` failure names whatever file it could not read -- a bundled asset
+ * inside the installed package, or a writer target under the user's home -- and
+ * which one it is depends on how subpixel was installed.
+ *
+ * Quoted forms first, because a path is the one thing in these messages that can
+ * contain a space: Node quotes the whole path in an ENOENT, and stopping at the
+ * first space in `/Users/Jane Doe/...` would publish the half that names the user.
+ * The unquoted alternatives run second and cover the POSIX, drive-letter and UNC
+ * roots.
+ *
+ * None of these can backtrack. Every alternative is a literal root followed by one
+ * `+` over a character class that excludes its own terminator, so each has exactly
+ * one way to match at a given position.
+ *
+ * ponytail: an UNQUOTED path with a space still leaks the segment the space splits.
+ * `/Users/Jane Doe/x` becomes `Jane Doex`, which is the first name -- the exact
+ * thing this function exists to withhold. Every message that reaches
+ * `install.problem` is a Node fs error, and those quote the path they name, so the
+ * shape is unreached rather than handled. The fix if one ever turns up is to
+ * replace the home directory with `~` before matching, which needs a `home` this
+ * pure function is not given.
+ */
+function shortenPaths(text: string): string {
+  return text
+    .replace(/(['"])(\/[^'"\r\n]+|[A-Za-z]:[\\/][^'"\r\n]+|\\\\[^'"\r\n]+)\1/g, (_match, quote, path) => {
+      return `${quote}${pathLeaf(path)}${quote}`;
+    })
+    .replace(/\/[^\s'"]+|[A-Za-z]:[\\/][^\s'"]+|\\\\[^\s'"]+/g, (path) => pathLeaf(path));
+}
+
+/**
+ * The doctor report as a model is allowed to see it.
+ *
+ * `spx doctor` is written for a person looking at their own machine, so it names
+ * absolute paths and the ChatGPT account behind the subscription. Over MCP the
+ * same object goes to whatever model the host happens to run, through whatever
+ * provider it happens to use. None of it is a credential, but `accountId` is a
+ * stable identifier for a paying account, and an absolute path carries the user's
+ * name and the shape of their disk.
+ *
+ * Neither is needed to act on the report. Every decision doctor drives is "is this
+ * present, is it expired, is it current", and a basename keeps the half that
+ * answers it: "auth.json is not valid JSON" is still the whole diagnosis. Only the
+ * address is withheld.
+ */
+export function publicDoctorReport(report: DoctorReport): DoctorReport {
+  const { accountId: _accountId, ...auth } = report.auth;
+  return {
+    ...report,
+    codexBinary: report.codexBinary === undefined ? undefined : basename(report.codexBinary),
+    auth: {
+      ...auth,
+      path: basename(report.auth.path),
+      // readAuth builds its messages out of the same path, so masking the field
+      // alone would leave the path in the sentence beside it.
+      ...(auth.problem !== undefined ? { problem: shorten(auth.problem, report.auth.path) } : {}),
+    },
+    config: {
+      ...report.config,
+      ...(report.config.path !== undefined ? { path: basename(report.config.path) } : {}),
+    },
+    install: {
+      ...report.install,
+      // The other free-text field, and the other one built out of a path. A package
+      // installed without its skills directory puts the absolute path of the missing
+      // file here, which the spread above would otherwise copy out verbatim.
+      ...(report.install.problem !== undefined
+        ? { problem: shortenPaths(report.install.problem) }
+        : {}),
+    },
   };
 }
 

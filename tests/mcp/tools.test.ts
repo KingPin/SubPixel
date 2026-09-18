@@ -24,6 +24,8 @@ const REPORT: DoctorReport = {
   model: { slug: "gpt-5.6-sol", source: "cache" },
   config: { styles: 0 },
   quota: { summary: "no reading yet", warn: false, stale: true },
+  install: { ok: true, configured: [], pending: [], conflicts: [] },
+  mcp: { tools: 1 },
   notice: "a notice",
 };
 
@@ -127,6 +129,25 @@ describe("the tool schemas", () => {
     }
   });
 
+  it.each(["constructor", "toString", "__proto__", "valueOf", "hasOwnProperty"])(
+    "rejects %j, which is not an argument any tool declares",
+    (key) => {
+      // `key in properties` is true for every one of these. The gate that
+      // rejects arguments a tool does not declare has to ask whether the schema
+      // owns the name, not whether anything in its prototype chain answers to it.
+      expect(() => validateArgs("generate_image", { prompt: "a fox", [key]: "x" })).toThrow(
+        `has no argument "${key}"`,
+      );
+    },
+  );
+
+  it("rejects __proto__ arriving as an own property from the wire", () => {
+    // JSON.parse does not run the setter: this lands as a plain own key, which
+    // Object.keys enumerates and `in` waved through.
+    const args = JSON.parse('{"prompt":"a fox","__proto__":{"polluted":true}}') as unknown;
+    expect(() => validateArgs("generate_image", args)).toThrow(/has no argument/);
+  });
+
   it("checks the element type inside an array argument", () => {
     expect(() => validateArgs("generate_image", { prompt: "a fox", variants: [400, "800"] })).toThrow(
       /variants\[1\]" must be a whole number/,
@@ -135,8 +156,76 @@ describe("the tool schemas", () => {
 });
 
 describe("the read-only tools", () => {
-  it("returns exactly what doctor --json prints", async () => {
-    expect(await callTool("doctor", {})).toEqual(await cliJson("doctor", "--json"));
+  it("answers every doctor question without naming the account or the disk", async () => {
+    collectDoctorReport.mockResolvedValue({
+      ...REPORT,
+      auth: {
+        ...REPORT.auth,
+        accountId: "acct-1a2b3c4d",
+        // readAuth builds this message out of the path, so masking the field
+        // alone would leave the path in the sentence beside it.
+        problem: "/home/tester/.codex/auth.json is not valid JSON. Run `codex login`.",
+      },
+      config: { path: "/home/tester/work/acme-rebrand/subpixel.config.json", styles: 2 },
+      install: {
+        ...REPORT.install,
+        ok: false,
+        // What a package installed without its skills directory throws. The path is
+        // not one publicDoctorReport knows in advance: it is wherever npm put us.
+        problem:
+          "ENOENT: no such file or directory, open '/Users/Jane Doe/.local/share/pnpm/global/5/node_modules/subpixel/skills/subpixel/SKILL.md'",
+      },
+    } satisfies DoctorReport);
+
+    const cli = (await cliJson("doctor", "--json")) as DoctorReport;
+    const mcp = (await callTool("doctor", {})) as DoctorReport;
+
+    // The CLI report is for a person looking at their own machine. It says everything.
+    expect(cli.auth.accountId).toBe("acct-1a2b3c4d");
+    expect(cli.config.path).toContain("/home/tester");
+
+    // The MCP report still answers every question doctor exists to answer.
+    expect(mcp.ok).toBe(cli.ok);
+    expect(mcp.model).toEqual(cli.model);
+    expect(mcp.auth.present).toBe(true);
+    expect(mcp.config.styles).toBe(2);
+    expect(mcp.auth.problem).toContain("is not valid JSON");
+    // The whole diagnosis survives. Only the address is withheld.
+    expect(mcp.install.problem).toBe(
+      "ENOENT: no such file or directory, open 'SKILL.md'",
+    );
+
+    // It names neither the account behind the subscription nor the user's disk.
+    expect(mcp.auth).not.toHaveProperty("accountId");
+    expect(JSON.stringify(mcp)).not.toContain("acct-1a2b3c4d");
+    expect(JSON.stringify(mcp)).not.toContain("/home/tester");
+    expect(JSON.stringify(mcp)).not.toContain("acme-rebrand");
+    expect(JSON.stringify(mcp)).not.toContain("Jane Doe");
+    expect(mcp.auth.path).toBe("auth.json");
+    expect(mcp.config.path).toBe("subpixel.config.json");
+    expect(mcp.codexBinary).toBe("codex");
+  });
+
+  it("masks a credential on the way out of doctor --json, like every other command", async () => {
+    // doctor reads auth.json and reports what went wrong with it. That makes it
+    // the command with the most to spill, not the least, and it was the one
+    // writing straight to stdout.
+    collectDoctorReport.mockResolvedValue({
+      ...REPORT,
+      auth: { ...REPORT.auth, problem: "refused: Bearer sk-live-abcdefghijklmnop" },
+    } satisfies DoctorReport);
+    const raw = JSON.stringify(await cliJson("doctor", "--json"));
+    expect(raw).not.toContain("abcdefghijklmnop");
+    expect(raw).toContain("[REDACTED]");
+  });
+
+  it("masks a credential on the way out of models --json", async () => {
+    // --model is the one user-controlled string that reaches this report, and a
+    // slug pasted from the wrong buffer is exactly how a key ends up in a
+    // terminal transcript.
+    const raw = JSON.stringify(await cliJson("models", "--json", "--model", "sk-live-abcdefghijklmnop"));
+    expect(raw).not.toContain("abcdefghijklmnop");
+    expect(raw).toContain("[REDACTED]");
   });
 
   it("returns exactly what models --json prints", async () => {

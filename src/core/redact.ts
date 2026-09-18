@@ -3,6 +3,15 @@ const MASK = "[REDACTED]";
 /**
  * Patterns are ordered from most specific to least. Each one is applied to the
  * whole string, so overlapping matches are fine.
+ *
+ * ponytail: four shapes, chosen to cover what this tool actually handles — the
+ * two JWTs in auth.json and the headers they travel in. This is a last line of
+ * defence over text that should not have held a credential at all, not a secret
+ * scanner: no vendor prefixes (ghp_, AKIA, xox...), so a third-party key pasted
+ * into a prompt survives into the manifest as prompt text, and the JSON-field
+ * pattern stops at the first `"` in a value so a token containing an escaped
+ * quote is masked only up to it. Documented under Redaction in SECURITY.md.
+ * Add prefixes if prompts ever start carrying other people's credentials.
  */
 const PATTERNS: Array<[RegExp, string]> = [
   // JWT: three base64url segments. Codex id_token and access_token are both JWTs.

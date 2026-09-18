@@ -48,11 +48,16 @@ export async function buildProgram(): Promise<Command> {
     .option("--json", "emit a single JSON object on stdout")
     .action(async (options: { json?: boolean }) => {
       const report = await collectDoctorReport();
-      if (options.json) {
-        process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-      } else {
-        process.stdout.write(`${formatDoctorReport(report)}\n`);
-      }
+      // Redact at the BOUNDARY, both branches, for the reason given under
+      // `styles` below. doctor reads auth.json and prints what went wrong with
+      // it, which makes it the command with the most to spill, not the least.
+      process.stdout.write(
+        redact(
+          options.json
+            ? `${JSON.stringify(report, null, 2)}\n`
+            : `${formatDoctorReport(report)}\n`,
+        ),
+      );
       process.exitCode = report.ok ? 0 : 1;
     });
 
@@ -63,11 +68,13 @@ export async function buildProgram(): Promise<Command> {
     .option("--model <slug>", "show the effect of pinning this model")
     .action(async (options: { json?: boolean; model?: string }) => {
       const report = await collectModelReport({ override: options.model });
-      if (options.json) {
-        process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-      } else {
-        process.stdout.write(`${formatModelReport(report)}\n`);
-      }
+      process.stdout.write(
+        redact(
+          options.json
+            ? `${JSON.stringify(report, null, 2)}\n`
+            : `${formatModelReport(report)}\n`,
+        ),
+      );
     });
 
   program

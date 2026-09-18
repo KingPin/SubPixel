@@ -1,8 +1,14 @@
-import { resolve } from "node:path";
-import { loadConfig } from "../config/load.js";
+import { access } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { findConfigFile, loadConfig } from "../config/load.js";
 import { ConfigError } from "../core/errors.js";
 import type { GenerateRequest } from "../core/types.js";
-import { MANIFEST_VERSION, manifestPathFor, readManifest } from "../engine/manifest.js";
+import {
+  MANIFEST_VERSION,
+  manifestPathFor,
+  readManifest,
+  resolveManifestReferences,
+} from "../engine/manifest.js";
 import type { ManifestEntry } from "../engine/manifest.js";
 import { runGenerateRequest, type GenerateCliOptions } from "./generate.js";
 import { resolveStyle } from "./styles.js";
@@ -27,6 +33,52 @@ export interface RegenCliOptions {
 }
 
 /**
+ * The directory a sidecar's reference images have to stay inside.
+ *
+ * Anchored on the IMAGE, not the shell. A sidecar records its references relative
+ * to itself and promises to replay from any working directory, so the root cannot
+ * come from `process.cwd()` without breaking that promise.
+ *
+ * `findConfigFile` decides it, which is the same walk every other part of the tool
+ * uses to answer "which project is this". Asking it here rather than keeping a
+ * second list of marker files is the point: two definitions of a project root
+ * disagree eventually, and the one that disagrees here rejects a reference the
+ * config in force considers perfectly local. That walk steps over a `package.json`
+ * with no `subpixel` key on purpose — a monorepo package almost always has one,
+ * and the project is the repository above it.
+ *
+ * A tree with no subpixel config at all falls back to its `.git` root, and an image
+ * outside even that is its own root, which still confines a reference to the
+ * directory the image sits in.
+ *
+ * ponytail: the no-marker fallback is stricter than the write side. `spx generate`
+ * takes `--image` from anywhere, so in a directory with neither a config nor a
+ * repository it can record `../refs/source.png` into a sidecar that `spx regen`
+ * then refuses. Money-safe — it refuses before it spends, and the message names
+ * `--image` as the way through — but it is a refusal about the user's own file.
+ * `spx init`, or any `subpixel.config.json`, ends it.
+ */
+export async function projectRootFor(imagePath: string): Promise<string> {
+  const start = dirname(resolve(imagePath));
+
+  const found = await findConfigFile(start);
+  if (found) return dirname(found.path);
+
+  let dir = start;
+  for (;;) {
+    try {
+      await access(join(dir, ".git"));
+      return dir;
+    } catch {
+      // Not a repository root. Try the parent.
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return start;
+    dir = parent;
+  }
+}
+
+/**
  * Rebuild the request that produced an image from its sidecar manifest.
  *
  * Exported for the tests: this is where a v1 manifest's absent fields turn into an
@@ -34,6 +86,7 @@ export interface RegenCliOptions {
  */
 export function requestFromManifest(
   imagePath: string,
+  projectDir: string,
   manifest: ManifestEntry,
   options: RegenCliOptions,
   style: ReturnType<typeof resolveStyle>,
@@ -50,9 +103,12 @@ export function requestFromManifest(
     // format this replay has to reproduce for the file to land on the same path.
     format: manifest.format,
     model: options.model ?? manifest.model,
-    // `readManifest` already resolved these against the sidecar's own directory, so
-    // the replay reads the same files whatever directory it runs in.
-    referenceImages: manifest.referenceImages,
+    // Resolved against the sidecar's own directory, so the replay reads the same
+    // files whatever directory it runs in, and confined to the project, because
+    // replaying a reference uploads it and the sidecar is not a trusted document.
+    referenceImages: manifest.referenceImages
+      ? resolveManifestReferences(imagePath, projectDir, manifest.referenceImages)
+      : undefined,
     variants: manifest.variantSpecs,
     // A `--style` flag replaces the recorded definition wholesale. Merging a named
     // style into a recorded one would produce a third style that neither the
@@ -86,7 +142,13 @@ export async function runRegen(image: string, options: RegenCliOptions): Promise
 
   const { config } = await loadConfig({ warn });
   const style = resolveStyle(config, options.style);
-  const request = requestFromManifest(imagePath, manifest, options, style);
+  const request = requestFromManifest(
+    imagePath,
+    await projectRootFor(imagePath),
+    manifest,
+    options,
+    style,
+  );
 
   await runGenerateRequest(request, {
     ...options,

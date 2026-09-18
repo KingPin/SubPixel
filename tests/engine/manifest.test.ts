@@ -6,8 +6,11 @@ import {
   MANIFEST_VERSION,
   manifestPathFor,
   readManifest,
+  resolveManifestReferences,
+  toPosixPath,
   writeManifest,
 } from "../../src/engine/manifest.js";
+import { ConfigError } from "../../src/core/errors.js";
 
 let dir: string;
 
@@ -74,7 +77,7 @@ describe("the replayable manifest", () => {
     expect((await readManifest(image))?.manifestVersion).toBe(MANIFEST_VERSION);
   });
 
-  it("stores reference paths relative to the sidecar and resolves them back", async () => {
+  it("stores reference paths relative to the sidecar, with / separators", async () => {
     await mkdir(join(dir, "images"), { recursive: true });
     await mkdir(join(dir, "refs"), { recursive: true });
     const image = join(dir, "images", "hero.png");
@@ -83,9 +86,52 @@ describe("the replayable manifest", () => {
     await writeManifest(image, { ...ENTRY, referenceImages: [reference] });
 
     const raw = JSON.parse(await readFile(`${image}.json`, "utf8")) as { referenceImages: string[] };
-    expect(raw.referenceImages).toEqual([join("..", "refs", "source.png")]);
-    // And back out absolute, so the replay reads the same file from any directory.
-    expect((await readManifest(image))?.referenceImages).toEqual([reference]);
+    // Forward slashes whatever platform wrote it: the sidecar is committed and
+    // replayed somewhere else.
+    expect(raw.referenceImages).toEqual(["../refs/source.png"]);
+    // Read gives back exactly what was recorded. Nothing is resolved until a
+    // caller names the root the path has to stay inside.
+    expect((await readManifest(image))?.referenceImages).toEqual(["../refs/source.png"]);
+  });
+
+  it("records the separator as / even for a path written on Windows", () => {
+    // The assertion the round-trip test above cannot make. On POSIX `relative()`
+    // already returns forward slashes, so that test passes with the conversion
+    // deleted. A sidecar is committed and replayed on a different machine from the
+    // one that wrote it, and `refs\\source.png` is ONE filename on POSIX.
+    expect(toPosixPath("..\\refs\\source.png", "\\")).toBe("../refs/source.png");
+    // Node accepts `/` on Windows too, so one direction covers both.
+    expect(toPosixPath("../refs/source.png", "\\")).toBe("../refs/source.png");
+  });
+
+  describe("resolveManifestReferences", () => {
+    it("resolves against the sidecar's directory, not the process cwd", () => {
+      const image = join(dir, "images", "hero.png");
+      expect(resolveManifestReferences(image, dir, ["../refs/source.png"])).toEqual([
+        join(dir, "refs", "source.png"),
+      ]);
+    });
+
+    it("refuses a relative path that climbs out of the project", () => {
+      const image = join(dir, "images", "hero.png");
+      expect(() =>
+        resolveManifestReferences(image, dir, ["../../../../etc/passwd.png"]),
+      ).toThrow(ConfigError);
+    });
+
+    it("refuses an absolute path outside the project", () => {
+      const image = join(dir, "images", "hero.png");
+      expect(() =>
+        resolveManifestReferences(image, dir, ["/home/dev/Pictures/scan.png"]),
+      ).toThrow(/replay reference images from inside the project/);
+    });
+
+    it("allows a reference that stays inside the project", () => {
+      const image = join(dir, "images", "hero.png");
+      expect(resolveManifestReferences(image, dir, ["sibling.png"])).toEqual([
+        join(dir, "images", "sibling.png"),
+      ]);
+    });
   });
 
   it("round-trips the requested variant specs, suffix included", async () => {

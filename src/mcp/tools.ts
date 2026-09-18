@@ -15,7 +15,7 @@ import type {
 } from "../core/types.js";
 import { ASSETS_FILENAME, loadAssets } from "../assets/load.js";
 import { syncAssets } from "../assets/sync.js";
-import { collectDoctorReport } from "../cli/doctor.js";
+import { collectDoctorReport, publicDoctorReport } from "../cli/doctor.js";
 import { buildEditRequest } from "../cli/edit.js";
 import {
   resolveGenerateDeps,
@@ -326,7 +326,12 @@ export function validateArgs(name: string, args: unknown): Record<string, unknow
 
   const bag = args as Record<string, unknown>;
   for (const key of Object.keys(bag)) {
-    if (!(key in inputSchema.properties)) {
+    // hasOwn, not `in`. `"constructor" in {}` is true, and so is `toString`,
+    // `__proto__` and the rest of Object.prototype, so `in` let a whole set of
+    // names through the one gate whose job is to reject names the tool does not
+    // declare. JSON.parse puts `__proto__` on the object as an own property, so
+    // that one arrives from the wire.
+    if (!Object.hasOwn(inputSchema.properties, key)) {
       const known = Object.keys(inputSchema.properties).sort().join(", ");
       throw new ConfigError(`${name} has no argument "${key}". Accepted: ${known || "none"}.`);
     }
@@ -528,7 +533,7 @@ export const HANDLERS: Record<string, Handler> = {
     return collectStyleReport(config, args.name as string | undefined);
   },
   list_models: async (args) => collectModelReport({ override: args.model as string | undefined }),
-  doctor: async (_args, deps) => collectDoctorReport({ cwd: cwdOf(deps) }),
+  doctor: async (_args, deps) => publicDoctorReport(await collectDoctorReport({ cwd: cwdOf(deps) })),
   get_image_job: async (args, deps) => {
     const id = args.job_id as string;
     const record = await readJob(deps.jobsDir ?? jobsDirFor(join(cwdOf(deps), ".subpixel")), id);

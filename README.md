@@ -131,7 +131,10 @@ commit the result.
 | `spx doctor` | Check credentials, driver model, and optional dependencies |
 | `spx models` | List the driver models subpixel will try, in order |
 
-`spx "a red fox"` is shorthand for `spx generate "a red fox"`.
+`spx "a red fox"` is shorthand for `spx generate "a red fox"`. The shorthand needs
+more than one word: a bare `spx fox` is reported as an unknown command rather than
+generated, so a mistyped subcommand cannot spend a generation. For a one-word
+prompt, say `spx generate fox`.
 
 Project settings — the named styles `--style` and `spx styles` read, the default
 backend, the output directory — live in a `subpixel.config.json` found by walking up

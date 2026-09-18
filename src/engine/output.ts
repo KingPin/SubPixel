@@ -35,12 +35,16 @@ export function sniffFormat(data: Uint8Array): ImageFormat | undefined {
 const MAX_SLUG = 40;
 
 export function slugify(text: string): string {
+  // The `[^a-z0-9]+` collapse below leaves single dashes only, never runs, so the
+  // trims match one dash rather than `-+`. Keep it that way: `-+` anchored at the
+  // end is a polynomial-backtracking shape, and it only stays harmless because
+  // nothing upstream can produce `--`. Reorder these and that stops being true.
   const slug = text
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/^-|-$/g, "")
     .slice(0, MAX_SLUG)
-    .replace(/-+$/g, "");
+    .replace(/-$/g, "");
   return slug.length > 0 ? slug : "image";
 }
 

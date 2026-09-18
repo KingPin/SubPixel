@@ -526,6 +526,7 @@ async function runGeneration(
       progress: ++completed,
       total: 1,
       message: artifact.path,
+      cached: true,
     });
     return {
       images: [artifact],

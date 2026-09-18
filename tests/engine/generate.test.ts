@@ -83,6 +83,19 @@ describe("generate", () => {
     expect(second.cached).toBe(true);
   });
 
+  it("marks the done event of a cache hit as free", async () => {
+    // `result.cached` says the same thing, but only `--json` publishes it. The
+    // progress line is what an agent watches, and a free hit that looks exactly like
+    // a paid generation is the one thing it must not misread.
+    const provider = vi.fn(okProvider);
+    await generate({ prompt: "a fox" }, deps(provider));
+    const onEvent = vi.fn();
+    await generate({ prompt: "a fox" }, deps(provider, { onEvent }));
+
+    const events = onEvent.mock.calls.map(([event]) => event as { stage: string; cached?: boolean });
+    expect(events.find((event) => event.stage === "done")?.cached).toBe(true);
+  });
+
   it("re-materialises a cache hit onto the same derived path", async () => {
     // Without an --output the name is derived, and a derived name that moves per
     // run makes the cache saving invisible: every repeat run leaves another

@@ -9,6 +9,62 @@ version had. Those changes are listed under **Changed** with what they affect.
 
 ## [Unreleased]
 
+### Security
+
+- **A sidecar can no longer replay a reference image from outside the project.**
+  `<image>.json` records the reference images a generation used, and `spx regen`
+  read those paths back and uploaded them again. A sidecar travels with its image
+  out of a pull request, a cache, or a colleague's directory, so the paths in one
+  are not necessarily paths the person running `regen` chose. They are now
+  resolved against the sidecar and confined to the project the image lives in.
+  The project root is found by walking up from the **image**, not from the shell,
+  so a sidecar still replays from any working directory. A reference outside it is
+  refused with an error that says to copy the file into the project or pass
+  `--image` explicitly.
+- **`doctor` over MCP no longer returns the ChatGPT account id or absolute
+  paths.** The CLI report is written for a person looking at their own machine;
+  the same object was handed to whatever model the host runs. `accountId` is not a
+  credential but it is a stable identifier for a paying account, and the paths
+  carry the user's name and the shape of their disk. The MCP view drops the
+  account id and reduces paths to basenames, which keeps the whole diagnosis and
+  withholds only the address.
+- **`spx doctor` and `spx models` write through `redact()`.** Every other command
+  in the CLI already did. `doctor` reads `auth.json` and reports what went wrong
+  with it, which makes it the command with the most to spill, not the least.
+- **MCP argument validation rejects names inherited from `Object.prototype`.**
+  The gate used `key in schema.properties`, which is true for `constructor`,
+  `toString`, `valueOf` and `__proto__`. `JSON.parse` delivers `__proto__` as an
+  ordinary own property, so that one arrived from the wire. Nothing downstream
+  spread the argument bag, so no live exploit was closed.
+- **A `codex exec` child that emits `error` after forking is killed.** The
+  provider resolved on the error and cleared its kill timer, leaving a live child
+  that could still finish the generation and bill for it.
+- **`SECURITY.md` now states what `redact()` does not cover.** It masks the shapes
+  subpixel's own credentials take. It is not a general secret scanner: it knows no
+  third-party vendor prefixes, so a key pasted into a prompt is stored in the
+  manifest as prompt text.
+
+### Changed
+
+- **The bare-prompt shorthand needs more than one word.** `spx fox` was rewritten
+  to `spx generate fox`, so a mistyped subcommand spent a generation instead of
+  reporting a typo. A single word is now reported as an unknown command.
+  `spx "a red fox"` is unchanged, and a genuinely one-word prompt is
+  `spx generate fox`.
+
+### Fixed
+
+- **The prompt reaches `codex exec` behind `--`.** `codex exec` has subcommands of
+  its own, so a prompt of `review` ran the review subcommand, and `--image` is
+  variadic, so a trailing positional could be absorbed into the file list. A
+  prompt beginning with a flag reached the child's parser, which is where this
+  provider's sandbox flags are decided.
+- **The child's stderr is bounded, and read from the tail.** codex streams
+  progress and reconnect lines there for as long as a run lasts, so the buffer
+  grew with the run while only 500 characters were ever reported — and they were
+  the first 500, which is whatever codex warned about on the way up rather than
+  the reason the run failed.
+
 ## [0.3.0] - 2026-09-16
 
 Works through a UX and security review of 0.2.0. The themes are the filesystem

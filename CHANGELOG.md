@@ -9,6 +9,13 @@ version had. Those changes are listed under **Changed** with what they affect.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-18
+
+Gives an agent the controls it needs to spend less, and works through what the
+process hands to whoever is on the other end of it. The themes are asking the
+cache a question instead of paying to learn the answer, bounding how much can be
+spent at once, and confining what a file on disk is allowed to make the tool do.
+
 ### Security
 
 - **A sidecar can no longer replay a reference image from outside the project.**
@@ -308,7 +315,8 @@ rather than half of one, and telling a caller what actually happened.
 
 Initial release.
 
-[unreleased]: https://github.com/KingPin/SubPixel/compare/v0.3.0...HEAD
+[unreleased]: https://github.com/KingPin/SubPixel/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/KingPin/SubPixel/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/KingPin/SubPixel/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/KingPin/SubPixel/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/KingPin/SubPixel/releases/tag/v0.1.0

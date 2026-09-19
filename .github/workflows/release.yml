@@ -28,8 +28,8 @@ jobs:
       matrix:
         node: ["24", "26"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -89,7 +89,7 @@ jobs:
             if (report.auth.present !== false) throw new Error("expected the report to name the missing auth");
           '
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.node == env.PACK_NODE
         with:
           name: tarball
@@ -102,7 +102,7 @@ jobs:
     needs: verify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ env.PACK_NODE }}
           registry-url: https://registry.npmjs.org
@@ -111,7 +111,7 @@ jobs:
       # so the floor is pinned here rather than assumed.
       - run: npm install -g npm@^11.5.1
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: tarball
 

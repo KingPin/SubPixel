@@ -132,8 +132,8 @@ that is the project the server sees.
 
 Generate an image from a text prompt. `prompt` is required. The optional arguments are
 `reference_images`, `size`, `quality`, `background`, `format`, `exact_size`,
-`transparent`, `variants`, `style`, `model`, `out`, `out_dir`, `backend`, `n`, and
-`dry_run`.
+`transparent`, `variants`, `style`, `model`, `out`, `out_dir`, `backend`, `n`,
+`no_cache`, and `dry_run`.
 
 `reference_images` is reference-guided generation, not in-place pixel editing. `size`,
 `quality`, and `background` are best effort on the subscription backend; `exact_size`
@@ -150,8 +150,26 @@ A preview is not a reservation. Nothing is held: another process can fill or emp
 cache between the preview and the real call, and the driver model can rotate.
 
 `n` accepts only 1. Every image costs subscription quota, and a tool that could be
-asked for eight of them is a tool that will be. There is no cache-bypass argument for
-the same reason: an agent that can retry for free will.
+asked for eight of them is a tool that will be.
+
+`no_cache: true` skips the cache lookup and draws the request again, which spends
+quota every time. Earlier releases withheld it on the grounds that an agent given a
+bypass will use it. That reasoning does not survive contact: an agent that wants a
+different picture for the same prompt and has no bypass appends noise to the prompt
+instead, which spends exactly the same quota and leaves a junk entry in the cache
+under a prompt nobody will type again. The argument is named for what it does, its
+description says it spends, and the reported `cached` field still tells the host which
+calls were free.
+
+It is not a retry. A call that failed never reached the cache, so there is nothing for
+`no_cache` to skip; retrying a slow call is what `get_image_job` is for. It is also
+separate from overwriting: a bypassed run writes a `-v2` sibling rather than replacing
+the file the first run produced.
+
+Pinning `model` does **not** force a fresh draw. The driver model is deliberately not
+part of the cache key, so a pinned model still serves a hit that some other model
+drew. Pass `model` with `no_cache: true` to get this model's own work; `model` alone
+only decides who draws a miss.
 
 `backend` does not accept `api`. The paid OpenAI backend is not implemented in this
 release, on any surface. When it ships it will be a deliberate, local CLI decision,

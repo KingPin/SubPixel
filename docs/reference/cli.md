@@ -267,6 +267,11 @@ OpenAI ships a new one, and hashing it would invalidate every image you already
 have on the day that happens, at your expense. The model that drew each image is
 recorded in its sidecar manifest instead.
 
+One consequence is worth stating plainly: `--model` does **not** promise a fresh
+draw. It decides who draws a *miss*. A request that is already cached is served from
+the cache whatever model you pin, because the pinned model is not in the key. Pass
+`--model` with `--no-cache` when you want that particular model's own work.
+
 Reference images are hashed by their contents rather than their paths, so moving a
 reference does not invalidate the cache and editing one does.
 

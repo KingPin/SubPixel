@@ -121,11 +121,20 @@ describe("the tool schemas", () => {
     expect(() => validateArgs("generate_image", { prompt: "a fox", n: 2 })).toThrow(/at most 1/);
   });
 
-  it("exposes no cache-bypass argument on either generating tool", () => {
+  it("offers the cache bypass, and keeps it separate from overwriting", () => {
+    // `no_cache` was deliberately withheld once, on the grounds that an agent given a
+    // bypass will use it. An agent that wants a different picture and has no bypass
+    // appends noise to the prompt instead, which spends the same quota and poisons the
+    // cache with a key nobody will ever hit again.
+    //
+    // `force` and `overwrite` are a different decision and stay out. Bypassing the
+    // cache buys a new image; replacing a file destroys one that is already on disk,
+    // and an agent has no business doing the second because it asked for the first.
     for (const name of ["generate_image", "edit_image"]) {
       const keys = Object.keys(TOOLS.find((tool) => tool.name === name)!.inputSchema.properties);
-      expect(keys).not.toContain("no_cache");
-      expect(keys).not.toContain("force");
+      expect(keys, name).toContain("no_cache");
+      expect(keys, name).not.toContain("force");
+      expect(keys, name).not.toContain("overwrite");
     }
   });
 
@@ -336,6 +345,64 @@ describe("sync_assets", () => {
     const report = await callTool("sync_assets", { check: true }, { cwd: dir });
 
     expect(report).toMatchObject({ drift: true });
+  });
+});
+
+describe("no_cache", () => {
+  const PNG = Buffer.from(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a4944415478" +
+      "9c6360000002000100ffff03000006000557bfabd40000000049454e44ae426082",
+    "hex",
+  );
+
+  /**
+   * Counts how many times it was asked for an image, and hands back a DIFFERENT one
+   * each time. A provider that returned identical bytes twice would exercise
+   * `writeImage`'s identical-content path instead of the sibling path, which is not
+   * what a second draw looks like.
+   */
+  function counting() {
+    let draw = 0;
+    return vi.fn(async () => ({
+      images: [Buffer.concat([PNG, Buffer.from([draw++])])],
+      model: "gpt-5",
+      effectivePrompt: "a red fox",
+    }));
+  }
+
+  it("draws again for a request the cache already holds", async () => {
+    const provider = counting();
+    const args = { prompt: "a red fox" };
+
+    await callTool("generate_image", args, { cwd: dir, provider: provider as never });
+    await callTool("generate_image", args, { cwd: dir, provider: provider as never });
+    // The second call is the control: without it a bypass that did nothing would still
+    // look like it worked, because every call would be a miss.
+    expect(provider).toHaveBeenCalledTimes(1);
+
+    await callTool(
+      "generate_image",
+      { ...args, no_cache: true },
+      { cwd: dir, provider: provider as never },
+    );
+    expect(provider).toHaveBeenCalledTimes(2);
+  });
+
+  it("writes a sibling rather than replacing what the first call produced", async () => {
+    // Bypassing the cache buys a new image. It does not authorise destroying the one
+    // already on disk, and no MCP argument does.
+    const provider = counting();
+    const args = { prompt: "a red fox", out: "fox.png" };
+
+    await callTool("generate_image", args, { cwd: dir, provider: provider as never });
+    await callTool(
+      "generate_image",
+      { ...args, no_cache: true },
+      { cwd: dir, provider: provider as never },
+    );
+
+    const images = (await readdir(dir)).filter((name) => name.endsWith(".png")).sort();
+    expect(images).toEqual(["fox-v2.png", "fox.png"]);
   });
 });
 

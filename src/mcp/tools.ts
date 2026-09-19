@@ -139,6 +139,14 @@ const IMAGE_PROPERTIES: Record<string, PropertySchema> = {
     minimum: 1,
     maximum: 1,
   },
+  no_cache: {
+    type: "boolean",
+    description:
+      "Skip the cache lookup and draw this request again. THIS SPENDS QUOTA every time, " +
+      "including for a request that has already been drawn. Use it when you want a different " +
+      "result for the same prompt, not as a retry: a call that failed has no cache entry to skip. " +
+      "It does not overwrite anything - a second image is written beside the first as a -v2 sibling.",
+  },
   dry_run: {
     type: "boolean",
     description:
@@ -425,6 +433,10 @@ function sharedOptionsFrom(args: Record<string, unknown>, cwd: string): SharedCl
     outDir: outDir === undefined ? undefined : within(cwd, outDir, "out_dir"),
     backend: args.backend as string | undefined,
     transparent: args.transparent as boolean | undefined,
+    // `cache`, not `noCache`: the CLI field is named for commander's `--no-cache`,
+    // which sets `cache: false`. `undefined` and not `true` in the default case, so
+    // an absent argument leaves the project config's answer alone.
+    cache: args.no_cache === true ? false : undefined,
     dryRun: args.dry_run as boolean | undefined,
     // The CLI takes "400,800" from a shell that has no arrays. The schema takes the
     // array an agent can actually build, and the one parser stays the CLI's.

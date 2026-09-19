@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { basename, join, relative } from "node:path";
 import { loadConfig } from "../config/load.js";
 import type { SubpixelConfig } from "../config/schema.js";
 import { ConfigError, withDetails } from "../core/errors.js";
@@ -144,7 +144,10 @@ const IMAGE_PROPERTIES: Record<string, PropertySchema> = {
     description:
       "Skip the cache lookup and draw this request again. THIS SPENDS QUOTA every time, " +
       "including for a request that has already been drawn. Use it when you want a different " +
-      "result for the same prompt, not as a retry: a call that failed has no cache entry to skip. " +
+      "result for the same prompt. DO NOT use it to retry a failed call: this tool banks the bytes " +
+      "it paid for before post-processing them, so a call that failed after the image was drawn is " +
+      "often recovered by an ordinary retry at no cost, and no_cache skips those banked bytes too " +
+      "and pays for the same picture twice. " +
       "It does not overwrite anything - a second image is written beside the first as a -v2 sibling.",
   },
   cache_only: {
@@ -400,6 +403,22 @@ function cwdOf(deps: ToolDeps): string {
 }
 
 /**
+ * A path an agent can act on without being told where this machine keeps its files.
+ *
+ * The same rule `publicDoctorReport` applies to the doctor output, for the same
+ * reason: the useful half of a path is which directory inside the project, and the
+ * half that is nobody's business is the account name above it. Relative while the
+ * path stays inside the project, because that form is both safe and the more useful
+ * one; a basename when it escapes, because the relative form of an outside path is a
+ * description of the layout above the project.
+ */
+function projectRelative(cwd: string, path: string): string {
+  const rel = relative(cwd, path);
+  if (rel === "") return ".";
+  return rel.startsWith("..") ? basename(path) : rel;
+}
+
+/**
  * The tools this build can run.
  *
  * Every entry returns the object the matching `--json` command prints, unchanged.
@@ -484,13 +503,25 @@ async function runImageTool(
   // provider and has no argument that could carry one, so the zero-quota promise in
   // the schema is a property of the code rather than of this branch being correct.
   if (options.dryRun === true) {
-    return planGenerate(request, {
+    const plan = await planGenerate(request, {
       outDir: generateDeps.outDir,
       backend: generateDeps.backend,
       model: options.model,
       noCache: generateDeps.noCache,
+      cacheOnly: generateDeps.cacheOnly,
       overwrite: generateDeps.overwrite,
     });
+    // The CLI prints the plan to the person who owns the directory, so it keeps the
+    // absolute paths. Here the reader is a model, and `outDir` was composed from the
+    // project config rather than supplied by the caller.
+    const cwd = cwdOf(deps);
+    return {
+      ...plan,
+      outDir: projectRelative(cwd, plan.outDir),
+      ...(plan.referenceImages && {
+        referenceImages: plan.referenceImages.map((path) => projectRelative(cwd, path)),
+      }),
+    };
   }
 
   const result = await generate(request, {

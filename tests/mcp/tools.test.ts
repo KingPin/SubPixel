@@ -1,6 +1,6 @@
 import { mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DoctorReport } from "../../src/cli/doctor.js";
 
@@ -432,6 +432,9 @@ describe("cache_only", () => {
   });
 });
 
+/** Enough of a PNG that `loadReferences` accepts it, as the real run would. */
+const PNG_HEADER = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+
 describe("dry_run", () => {
   // The provider throws rather than returning a fake image. A preview that reached a
   // backend would look like a pass against a stub, and the whole point of the flag is
@@ -462,7 +465,7 @@ describe("dry_run", () => {
     // A real PNG signature: `planGenerate` reads and sniffs the reference exactly
     // as the real run does, which is the point -- the key it previews has to be the
     // key the real call looks up.
-    await writeFile(join(dir, "hero.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]));
+    await writeFile(join(dir, "hero.png"), PNG_HEADER);
     const plan = (await callTool(
       "edit_image",
       { image: "hero.png", instruction: "make it blue", dry_run: true },
@@ -470,6 +473,38 @@ describe("dry_run", () => {
     )) as { dryRun: boolean };
 
     expect(plan.dryRun).toBe(true);
+  });
+
+  it("refuses a combination the real call would refuse", async () => {
+    // A preview exists to answer "what would happen", and "this call is refused" is
+    // one of the answers. Reporting a clean plan for a request `generate` rejects
+    // sends an agent off to make a call that cannot run.
+    await expect(
+      callTool(
+        "generate_image",
+        { prompt: "a red fox", dry_run: true, cache_only: true, no_cache: true },
+        { cwd: dir, provider: explode },
+      ),
+    ).rejects.toBeInstanceOf(ConfigError);
+  });
+
+  it("keeps the absolute path off the wire", async () => {
+    // The reader here is a model, not the person who owns the directory. `outDir` is
+    // composed from the project config rather than supplied by the caller, so an
+    // absolute one hands over the account name and the layout above the project --
+    // the same thing `publicDoctorReport` withholds from the doctor output.
+    await writeFile(join(dir, "hero.png"), PNG_HEADER);
+    const plan = (await callTool(
+      "edit_image",
+      { image: "hero.png", instruction: "make it blue", dry_run: true },
+      { cwd: dir, provider: explode },
+    )) as { outDir: string; referenceImages?: string[] };
+
+    expect(isAbsolute(plan.outDir)).toBe(false);
+    expect(plan.outDir).not.toContain(dir);
+    for (const reference of plan.referenceImages ?? []) {
+      expect(isAbsolute(reference), reference).toBe(false);
+    }
   });
 
   it("previews the key the real call would look up", async () => {

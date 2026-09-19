@@ -357,6 +357,32 @@ function provenanceOf(entry: CacheEntry): CacheProvenance | undefined {
   };
 }
 
+/**
+ * Refuse the cache-mode combinations that cannot mean anything.
+ *
+ * Shared by `generate` and by `planGenerate`, which is the point. `generate` is
+ * reached from the CLI, from MCP and from `spx sync`, so the check cannot live at a
+ * caller; and a preview that reports a clean plan for a request the real run refuses
+ * is worse than no preview, so it cannot live only in `generate` either.
+ */
+export function preflightCacheModes(
+  request: Pick<GenerateRequest, "n">,
+  modes: { cacheOnly?: boolean; noCache?: boolean },
+): void {
+  if (!modes.cacheOnly) return;
+  if (modes.noCache) {
+    throw new ConfigError(
+      "--cache-only serves the cache and --no-cache ignores it. Pass one or the other.",
+    );
+  }
+  if ((request.n ?? 1) > 1) {
+    throw new ConfigError(
+      `--cache-only answers for one image, and -n ${request.n} asks for a batch. ` +
+        "The cache is only consulted for a single-image request.",
+    );
+  }
+}
+
 export async function generate(
   request: GenerateRequest,
   deps: GenerateDeps,
@@ -366,20 +392,7 @@ export async function generate(
   // user quota for an image they never receive.
   await preflightPostProcessing(request);
 
-  // Both checks here rather than at each caller. `generate` is reached from the CLI,
-  // from MCP, and from `spx sync`, and a guard in one of them is a guard the other
-  // two are missing.
-  if (deps.cacheOnly && deps.noCache) {
-    throw new ConfigError(
-      "--cache-only serves the cache and --no-cache ignores it. Pass one or the other.",
-    );
-  }
-  if (deps.cacheOnly && (request.n ?? 1) > 1) {
-    throw new ConfigError(
-      `--cache-only answers for one image, and -n ${request.n} asks for a batch. ` +
-        "The cache is only consulted for a single-image request.",
-    );
-  }
+  preflightCacheModes(request, deps);
 
   // Ordering matters. The key is built from reference CONTENT, so the files must be
   // read first. Reading them after a cache lookup would mean a hit was decided

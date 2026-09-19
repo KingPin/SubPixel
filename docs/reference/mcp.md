@@ -161,10 +161,14 @@ under a prompt nobody will type again. The argument is named for what it does, i
 description says it spends, and the reported `cached` field still tells the host which
 calls were free.
 
-It is not a retry. A call that failed never reached the cache, so there is nothing for
-`no_cache` to skip; retrying a slow call is what `get_image_job` is for. It is also
-separate from overwriting: a bypassed run writes a `-v2` sibling rather than replacing
-the file the first run produced.
+It is not a retry, and using it as one is the expensive mistake. Generation banks the
+bytes it paid for before post-processing, so a call that failed *after* the image was
+drawn does leave cache data, and an ordinary retry re-processes those bytes locally
+for nothing. `no_cache` skips the bank too and buys the picture a second time.
+Retrying a slow call is what `get_image_job` is for.
+
+It is also separate from overwriting: a bypassed run writes a `-v2` sibling rather
+than replacing the file the first run produced.
 
 `cache_only: true` is the opposite: answer only if this request is already in the
 cache, and fail with `CACHE_MISS` rather than draw it. Nothing is spent either way, so

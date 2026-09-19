@@ -14,6 +14,7 @@ Every command writes artifact paths to stdout and everything else to stderr, so
 | 4 | Rate limited | Wait. Retrying immediately makes it worse. |
 | 5 | Backend unavailable | Transient. Safe to retry, and safe to fall back to another backend. |
 | 6 | `sync --check` found drift | Run `spx sync` and commit the result. |
+| 7 | `--cache-only` found nothing | The image is not paid for yet. Run without `--cache-only` to draw it. Nothing was spent. |
 
 A CI job that wants to retry should retry on 5 and never on 2.
 

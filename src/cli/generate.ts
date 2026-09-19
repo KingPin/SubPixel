@@ -257,7 +257,7 @@ export async function runGenerateRequest(
   options: GenerateCliOptions & { config: SubpixelConfig },
 ): Promise<void> {
   const deps = resolveGenerateDeps(request, options);
-  const { outDir, backend, noCache, overwrite } = deps;
+  const { outDir, backend, noCache, cacheOnly, overwrite } = deps;
 
   if (options.dryRun) {
     // The WHOLE document, not just the prompt. `outDir` and every reference path is
@@ -267,7 +267,14 @@ export async function runGenerateRequest(
     process.stdout.write(
       redact(
         `${JSON.stringify(
-          await planGenerate(request, { outDir, backend, model: options.model, noCache, overwrite }),
+          await planGenerate(request, {
+            outDir,
+            backend,
+            model: options.model,
+            noCache,
+            cacheOnly,
+            overwrite,
+          }),
           null,
           2,
         )}\n`,

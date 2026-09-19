@@ -3,7 +3,7 @@ import { hasCodexBinary } from "../providers/codex-exec.js";
 import { resolveModel } from "../providers/models.js";
 import { resolveChain } from "../providers/resolve.js";
 import { cacheKey } from "./cache.js";
-import { preflightPostProcessing } from "./generate.js";
+import { preflightCacheModes, preflightPostProcessing } from "./generate.js";
 import { augmentPrompt } from "./prompt.js";
 import { loadReferences } from "./references.js";
 
@@ -15,6 +15,7 @@ export interface PlanOptions {
   model?: string;
   /** Optional, because `GenerateDeps` leaves them so; reported as plain booleans. */
   noCache?: boolean;
+  cacheOnly?: boolean;
   overwrite?: boolean;
 }
 
@@ -29,6 +30,7 @@ export interface GeneratePlan {
   cacheKey: string;
   referenceImages?: string[];
   noCache: boolean;
+  cacheOnly: boolean;
   overwrite: boolean;
 }
 
@@ -59,6 +61,10 @@ export async function planGenerate(
   // Without it `--exact-size nonsense --dry-run` exited 0 and a malformed `--size`
   // failed later, inside aspect-ratio arithmetic, with no flag named.
   await preflightPostProcessing(request);
+  // The same reasoning one line up, applied to the combinations `generate` refuses.
+  // `--dry-run --cache-only --no-cache` reporting a clean plan for a call that cannot
+  // run is the exact failure this function exists to prevent.
+  preflightCacheModes(request, options);
 
   const resolved = await resolveModel({ override: options.model });
   const chain = resolveChain({
@@ -79,8 +85,9 @@ export async function planGenerate(
       referenceHashes: references.map((reference) => reference.sha256),
     }),
     ...(request.referenceImages && { referenceImages: request.referenceImages }),
-    // Reported so --force can be verified without spending anything.
+    // Reported so --force and --cache-only can be verified without spending anything.
     noCache: options.noCache === true,
+    cacheOnly: options.cacheOnly === true,
     overwrite: options.overwrite === true,
   };
 }

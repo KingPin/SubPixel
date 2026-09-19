@@ -27,8 +27,11 @@
   },
   "files": [
     "dist",
+    "!dist/**/*.js.map",
     "skills",
     "README.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
     "LICENSE"
   ],
   "scripts": {

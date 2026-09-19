@@ -69,7 +69,7 @@ second run changes nothing, and `--dry-run` prints every file it would write wit
 touching the disk.
 
 Claude Code gets the skill and not an MCP entry, because it can already run the CLI
-from its own shell ([why](docs/reference/mcp.md#claude-code)). Ask for the entry with
+from its own shell ([why](https://github.com/KingPin/SubPixel/blob/main/docs/reference/mcp.md#claude-code)). Ask for the entry with
 `spx init --only claude-mcp` if you want it anyway.
 
 The MCP server is `spx mcp`, a stdio server exposing seven tools: `generate_image`,
@@ -88,7 +88,7 @@ A generation outlives most host timeouts, so the server takes one of two paths. 
 that asked for progress notifications gets them, and the call stays open. A host that
 did not gets a `job_id` back after a few seconds, and polls `get_image_job` for the
 result. **Poll, do not retry.** A retried generation is a second image and a second
-charge. See [docs/reference/mcp.md](docs/reference/mcp.md).
+charge. See [docs/reference/mcp.md](https://github.com/KingPin/SubPixel/blob/main/docs/reference/mcp.md).
 
 ## Declared assets and CI
 
@@ -142,7 +142,7 @@ from the working directory, or under a `subpixel` key in `package.json`. The dri
 model is not one of them; it comes from Codex, and `--model` pins it per run.
 
 Full flags, exit codes, and the configuration file formats are in
-[docs/reference/cli.md](docs/reference/cli.md).
+[docs/reference/cli.md](https://github.com/KingPin/SubPixel/blob/main/docs/reference/cli.md).
 
 ## What the flags actually promise
 

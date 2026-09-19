@@ -41,6 +41,12 @@ version had. Those changes are listed under **Changed** with what they affect.
 - **A `codex exec` child that emits `error` after forking is killed.** The
   provider resolved on the error and cleared its kill timer, leaving a live child
   that could still finish the generation and bill for it.
+- **The filename slug no longer runs a backtracking-shaped regex over the
+  prompt.** `slugify` trimmed `-+` anchored at the end of a string it had just
+  built, which is the shape that backtracks polynomially. It only ever stayed
+  harmless because the collapse above it cannot produce a double dash, and that is
+  an invariant a later edit could break without noticing. The trim now matches a
+  single dash. Slugs are unchanged; this removes the shape, not a behaviour.
 - **`SECURITY.md` now states what `redact()` does not cover.** It masks the shapes
   subpixel's own credentials take. It is not a general secret scanner: it knows no
   third-party vendor prefixes, so a key pasted into a prompt is stored in the
@@ -53,6 +59,37 @@ version had. Those changes are listed under **Changed** with what they affect.
   progress saw a free hit and a paid generation render identically. `done`
   now carries it and reads `done (cached)` on both the CLI's stderr and an MCP
   progress notification.
+
+- **`--cache-only` / `cache_only` asks the cache a question instead of spending.**
+  Serve this request if it is already paid for, and exit **7** (`CACHE_MISS`)
+  without spending if it is not. `CACHE_MISS` is an answer, not a breakage, in the
+  same way `spx sync --check` reports drift, so a CI job can gate a build on
+  whether its assets are covered. Bytes this project already paid for count as a
+  hit even when they still need local work: a request whose raw generation is
+  banked but whose crop failed last run is re-processed locally and reported as a
+  hit, because serving it spends nothing.
+- **`dry_run` on `generate_image` and `edit_image`.** Reports the backend chain,
+  the driver model and where it came from, the effective prompt, the output
+  directory and the cache key, then stops. No network call, no quota, nothing
+  written. The key it reports is the key the real call looks up, so an agent can
+  tell a hit from a miss without paying to find out. The planner takes no provider
+  and has no argument that could carry one, so the zero-quota guarantee is a
+  property of the signature rather than of a branch being correct.
+- **`no_cache` on `generate_image` and `edit_image`.** Earlier releases withheld a
+  cache bypass from agents on the grounds that an agent given one will use it. An
+  agent that wants a different picture for the same prompt and has no bypass
+  appends noise to the prompt instead, which spends exactly the same quota and
+  leaves an entry under a prompt nobody will type again. It is not a retry: this
+  tool banks the bytes it paid for before post-processing, so a call that failed
+  after the image was drawn is often recovered by an ordinary retry at no cost,
+  and `no_cache` skips those banked bytes too. `force` and `overwrite` stay out.
+- **The MCP server bounds how many spending calls it runs at once.** Two by
+  default, `mcp.concurrency` in the project config or `SUBPIXEL_MCP_CONCURRENCY`
+  in the environment. Per-call concurrency bounds one batch; this bounds the
+  process, which is the only thing that knows how many agents are talking to it.
+  A queued call still gets its `job_id` at the cut-over, so the queue never holds
+  a host's request open. Calls that cannot spend — `dry_run`, `cache_only`,
+  `sync_assets` with `check`, and every read-only tool — never queue.
 
 ### Changed
 
@@ -72,6 +109,25 @@ version had. Those changes are listed under **Changed** with what they affect.
   reporting a typo. A single word is now reported as an unknown command.
   `spx "a red fox"` is unchanged, and a genuinely one-word prompt is
   `spx generate fox`.
+
+### Fixed
+
+- **`--exact-size` no longer re-encodes JPEG and WebP at sharp's default
+  quality.** Resizing an image the backend had already returned put it back
+  through the encoder at whatever default sharp chose, so asking for an exact
+  size silently cost quality on an image that had already been paid for. The
+  requested quality is carried through the resize.
+- **`spx icons` refuses an occupied destination before it builds the pack**,
+  rather than after. The refusal came after the work, so a run that could never
+  write its output still spent the time and memory to produce it.
+
+### Performance
+
+- **SSE parsing reads each chunk once** instead of rescanning the whole buffered
+  line per chunk, which was quadratic in the length of a line and made a large
+  streamed response cost more the longer it got.
+- **`writeImage` hashes the image once per write** rather than once per sibling
+  name tried.
 
 ### Fixed
 

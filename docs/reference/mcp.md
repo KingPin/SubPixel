@@ -132,11 +132,22 @@ that is the project the server sees.
 
 Generate an image from a text prompt. `prompt` is required. The optional arguments are
 `reference_images`, `size`, `quality`, `background`, `format`, `exact_size`,
-`transparent`, `variants`, `style`, `model`, `out`, `out_dir`, `backend`, and `n`.
+`transparent`, `variants`, `style`, `model`, `out`, `out_dir`, `backend`, `n`, and
+`dry_run`.
 
 `reference_images` is reference-guided generation, not in-place pixel editing. `size`,
 `quality`, and `background` are best effort on the subscription backend; `exact_size`
 is the one that is guaranteed, and it needs `sharp`.
+
+`dry_run: true` reports what the call would do — the backend chain, the driver model
+and where it came from, the effective prompt after the style is applied, the output
+directory, and the cache key — and then stops. It makes no network call, spends
+nothing, and writes nothing. It is the argument to reach for before an expensive
+call, and the cache key it reports is the key the real call will look up, so an agent
+can tell a hit from a miss without paying to find out.
+
+A preview is not a reservation. Nothing is held: another process can fill or empty the
+cache between the preview and the real call, and the driver model can rotate.
 
 `n` accepts only 1. Every image costs subscription quota, and a tool that could be
 asked for eight of them is a tool that will be. There is no cache-bypass argument for

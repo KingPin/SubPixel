@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -336,6 +336,64 @@ describe("sync_assets", () => {
     const report = await callTool("sync_assets", { check: true }, { cwd: dir });
 
     expect(report).toMatchObject({ drift: true });
+  });
+});
+
+describe("dry_run", () => {
+  // The provider throws rather than returning a fake image. A preview that reached a
+  // backend would look like a pass against a stub, and the whole point of the flag is
+  // that the call costs nothing.
+  const explode = vi.fn(async () => {
+    throw new Error("the provider was called by a dry run");
+  }) as never;
+
+  it("previews generate_image without reaching a provider or writing a file", async () => {
+    const plan = (await callTool(
+      "generate_image",
+      { prompt: "a red fox", dry_run: true },
+      { cwd: dir, provider: explode },
+    )) as { dryRun: boolean; cacheKey: string; effectivePrompt: string; outDir: string };
+
+    expect(plan.dryRun).toBe(true);
+    expect(plan.effectivePrompt).toContain("a red fox");
+    expect(plan.cacheKey).toMatch(/^[0-9a-f]{64}$/);
+    // Nothing on disk either. `.subpixel` is the server's own state directory and is
+    // allowed to exist; an image is not.
+    const written = (await readdir(dir)).filter((name) => name !== ".subpixel");
+    expect(written).toEqual([]);
+  });
+
+  it("previews edit_image too", async () => {
+    // Both generating tools, because the bypass lives in the shared half and a flag
+    // wired into only one of them is the failure that would not be noticed.
+    // A real PNG signature: `planGenerate` reads and sniffs the reference exactly
+    // as the real run does, which is the point -- the key it previews has to be the
+    // key the real call looks up.
+    await writeFile(join(dir, "hero.png"), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]));
+    const plan = (await callTool(
+      "edit_image",
+      { image: "hero.png", instruction: "make it blue", dry_run: true },
+      { cwd: dir, provider: explode },
+    )) as { dryRun: boolean };
+
+    expect(plan.dryRun).toBe(true);
+  });
+
+  it("previews the key the real call would look up", async () => {
+    // A preview whose key differs from the real run's key answers a question nobody
+    // asked. Same request, dry and wet, must hash the same.
+    const a = (await callTool(
+      "generate_image",
+      { prompt: "a red fox", size: "1024x1024", dry_run: true },
+      { cwd: dir, provider: explode },
+    )) as { cacheKey: string };
+    const b = (await callTool(
+      "generate_image",
+      { prompt: "a red fox", size: "1024x1024", dry_run: true },
+      { cwd: dir, provider: explode },
+    )) as { cacheKey: string };
+
+    expect(a.cacheKey).toBe(b.cacheKey);
   });
 });
 

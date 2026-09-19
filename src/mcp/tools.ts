@@ -28,6 +28,7 @@ import { checkAssets } from "../cli/sync.js";
 import { collectStyleReport, resolveStyle } from "../cli/styles.js";
 import { toJsonResult } from "../engine/emit.js";
 import { generate, type ProviderFn } from "../engine/generate.js";
+import { planGenerate } from "../engine/plan.js";
 import { jobsDirFor, readJob } from "./jobs.js";
 
 /**
@@ -137,6 +138,13 @@ const IMAGE_PROPERTIES: Record<string, PropertySchema> = {
     description: "Number of images. Only 1 is accepted here: every image costs subscription quota.",
     minimum: 1,
     maximum: 1,
+  },
+  dry_run: {
+    type: "boolean",
+    description:
+      "Report what this call would do - driver model, backend chain, effective prompt, cache key, " +
+      "output directory - and stop. Makes no network call and spends no quota. A preview is not a " +
+      "reservation: nothing is held, and the cache can change before the real call.",
   },
 };
 
@@ -417,6 +425,7 @@ function sharedOptionsFrom(args: Record<string, unknown>, cwd: string): SharedCl
     outDir: outDir === undefined ? undefined : within(cwd, outDir, "out_dir"),
     backend: args.backend as string | undefined,
     transparent: args.transparent as boolean | undefined,
+    dryRun: args.dry_run as boolean | undefined,
     // The CLI takes "400,800" from a shell that has no arrays. The schema takes the
     // array an agent can actually build, and the one parser stays the CLI's.
     variants: variants === undefined ? undefined : variants.join(","),
@@ -450,6 +459,19 @@ async function runImageTool(
   // called `generate()` with hand-built dependencies would spend past the project's
   // own `budget.maxImagesPerRun`.
   const generateDeps = resolveGenerateDeps(request, { ...options, config, cwd });
+
+  // Before `generate` is named, and handed none of `deps`. `planGenerate` takes no
+  // provider and has no argument that could carry one, so the zero-quota promise in
+  // the schema is a property of the code rather than of this branch being correct.
+  if (options.dryRun === true) {
+    return planGenerate(request, {
+      outDir: generateDeps.outDir,
+      backend: generateDeps.backend,
+      model: options.model,
+      noCache: generateDeps.noCache,
+      overwrite: generateDeps.overwrite,
+    });
+  }
 
   const result = await generate(request, {
     ...generateDeps,

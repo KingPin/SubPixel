@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ConfigError } from "../../src/core/errors.js";
-import { enforceExactSize } from "../../src/engine/output.js";
+import { enforceExactSize, sniffFormat } from "../../src/engine/output.js";
 
 let sharpAvailable = true;
 try {
@@ -35,6 +35,28 @@ describe.runIf(sharpAvailable)("enforceExactSize with sharp", () => {
     const meta = await sharp(output).metadata();
     expect(meta.width).toBe(400);
     expect(meta.height).toBe(300);
+  });
+
+  it("re-encodes at this file's quality, not at sharp's default", async () => {
+    // `toBuffer()` with no format call re-encodes JPEG and WebP at quality 80, so the
+    // crop used to hand back a third fewer bytes than the same crop at 90 -- a silent
+    // quality cut on an image the caller has already paid for. Noise, because a flat
+    // fill compresses to nothing at either quality and the two would tie.
+    const sharp = (await import("sharp")).default;
+    const pixels = Buffer.alloc(1024 * 1024 * 3);
+    for (let i = 0; i < pixels.length; i++) pixels[i] = (Math.sin(i * 0.37) * 127 + 128) | 0;
+    const input = await sharp(pixels, { raw: { width: 1024, height: 1024, channels: 3 } })
+      .jpeg({ quality: 95 })
+      .toBuffer();
+
+    const output = await enforceExactSize(input, "800x600");
+    const atSharpsDefault = await sharp(input)
+      .resize(800, 600, { fit: "cover", position: "attention" })
+      .toBuffer();
+    // Still JPEG, asserted here rather than on its own: a test that only checked the
+    // format would pass either way, because sharp's default re-encode is JPEG too.
+    expect(sniffFormat(output)).toBe("jpeg");
+    expect(output.length).toBeGreaterThan(atSharpsDefault.length * 1.15);
   });
 
   it("rejects a malformed size", async () => {

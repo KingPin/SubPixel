@@ -159,11 +159,16 @@ export interface WriteImageOptions {
 
 const DEFAULT_MAX_SIBLINGS = 99;
 
-/** Whether `path` already holds exactly `data`. A missing or unreadable file is not. */
-async function sameBytes(path: string, data: Uint8Array): Promise<boolean> {
+/**
+ * Whether `path` already holds exactly `data`. A missing or unreadable file is not.
+ *
+ * `digest` is passed in rather than computed: the caller already has it, and this
+ * runs once per sibling name tried.
+ */
+async function sameBytes(path: string, data: Uint8Array, digest: string): Promise<boolean> {
   try {
     const existing = await readFile(path);
-    return existing.length === data.length && sha256(existing) === sha256(data);
+    return existing.length === data.length && sha256(existing) === digest;
   } catch {
     return false;
   }
@@ -203,6 +208,21 @@ export async function writeImage(
     );
   }
 
+  // Hashed once, here. Every return below carries it and `sameBytes` compares
+  // against it on each sibling name tried, so computing it where it is used meant
+  // walking the whole image two or three times to answer the same question.
+  const digest = sha256(data);
+  const artifactAt = (written: string): ImageArtifact => ({
+    path: written,
+    bytes: data.length,
+    format,
+    sha256: digest,
+    ...(options.requestedFormat && options.requestedFormat !== format
+      ? { requestedFormat: options.requestedFormat }
+      : {}),
+    ...(written !== intended ? { siblingOf: intended } : {}),
+  });
+
   const maxSiblings = options.maxSiblings ?? DEFAULT_MAX_SIBLINGS;
   let target = intended;
   // Why the redirect happened, so the warning can say which file was in the way. The
@@ -230,16 +250,7 @@ export async function writeImage(
             : `${basename(intended)} exists. Wrote ${basename(target)} instead.`,
         );
       }
-      return {
-        path: target,
-        bytes: data.length,
-        format,
-        sha256: sha256(data),
-        ...(options.requestedFormat && options.requestedFormat !== format
-          ? { requestedFormat: options.requestedFormat }
-          : {}),
-        ...(target !== intended ? { siblingOf: intended } : {}),
-      };
+      return artifactAt(target);
     }
     // The target exists. If it already holds exactly these bytes, this run is a
     // re-run of one that already succeeded — writing `-v2` beside an identical
@@ -249,17 +260,8 @@ export async function writeImage(
     //
     // Gated on the sidecar too: returning early here is a promise that the manifest
     // about to be written lands somewhere it is allowed to.
-    if (sidecarFree && (await sameBytes(target, data))) {
-      return {
-        path: target,
-        bytes: data.length,
-        format,
-        sha256: sha256(data),
-        ...(options.requestedFormat && options.requestedFormat !== format
-          ? { requestedFormat: options.requestedFormat }
-          : {}),
-        ...(target !== intended ? { siblingOf: intended } : {}),
-      };
+    if (sidecarFree && (await sameBytes(target, data, digest))) {
+      return artifactAt(target);
     }
     if (attempt > maxSiblings) {
       throw new OutputError(

@@ -54,6 +54,27 @@ describe("parseSse", () => {
     expect(events).toEqual([{ event: "a", data: "hi" }]);
   });
 
+  it("handles a CRLF split down the middle by a chunk boundary", async () => {
+    // The \r ends one chunk and the \n starts the next, so neither chunk contains the
+    // pair. Lines are assembled from pieces and the \r is stripped off the assembled
+    // line, which is the only place the two halves are ever next to each other.
+    const events = await collect(streamOf(["event: a\r", "\ndata: hi\r", "\n\r", "\n"]));
+    expect(events).toEqual([{ event: "a", data: "hi" }]);
+  });
+
+  it("assembles one line out of many chunks", async () => {
+    // What a real image looks like on the wire: a single `data:` line carrying
+    // megabytes of base64, arriving 64KB at a time. Re-scanning the accumulated
+    // buffer for a newline on every chunk is quadratic in the size of the line.
+    const payload = "A".repeat(1024 * 1024);
+    const line = `event: a\ndata: ${payload}\n\n`;
+    const chunks: string[] = [];
+    for (let i = 0; i < line.length; i += 64 * 1024) chunks.push(line.slice(i, i + 64 * 1024));
+    expect(chunks.length).toBeGreaterThan(10);
+    const events = await collect(streamOf(chunks));
+    expect(events).toEqual([{ event: "a", data: payload }]);
+  });
+
   it("defaults the event name to message", async () => {
     const events = await collect(streamOf(["data: bare\n\n"]));
     expect(events).toEqual([{ event: "message", data: "bare" }]);

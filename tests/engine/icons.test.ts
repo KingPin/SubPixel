@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ICON_PACK, buildIco, buildIconPack } from "../../src/engine/icons.js";
+import { ICON_PACK, ICON_PACK_FILES, buildIco, buildIconPack } from "../../src/engine/icons.js";
 import { sniffFormat } from "../../src/engine/output.js";
 import { probeDimensions, sharpAvailable } from "../../src/engine/sharpx.js";
 import { TINY_PNG_BASE64 } from "../fixtures/tiny.png.js";
@@ -46,6 +46,14 @@ describe("buildIco", () => {
 });
 
 describe.runIf(hasSharp)("buildIconPack", () => {
+  it("produces exactly the files ICON_PACK_FILES names", async () => {
+    // The CLI decides whether it is allowed to write using ICON_PACK_FILES, before
+    // any of these exist. A name in one list and not the other is a file written
+    // without being checked, or a check for a file that never arrives.
+    const pack = await buildIconPack(PNG);
+    expect(pack.map((file) => file.name).sort()).toEqual([...ICON_PACK_FILES].sort());
+  });
+
   it("produces every declared file at its declared size", async () => {
     const pack = await buildIconPack(PNG);
     for (const spec of ICON_PACK) {

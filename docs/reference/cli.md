@@ -42,6 +42,7 @@ spx generate "an isometric analytics dashboard, dark mode" --size 1536x1024 --fo
 | `--json` | Emit the whole result as one JSON document on stdout. |
 | `--dry-run` | Print the resolved plan and exit without spending quota. |
 | `--no-cache` | Ignore the cache for this request. |
+| `--cache-only` | Serve this request only if the cache already holds it. A miss exits 7 and spends nothing. |
 | `--overwrite` | Replace an existing output file. |
 | `--no-overwrite` | Write a `-v2` sibling instead of replacing. This is the default; the flag exists to spell it. |
 | `-f, --force` | `--no-cache --overwrite`. |
@@ -266,6 +267,17 @@ The driver model is deliberately **not** part of that hash. It rotates whenever
 OpenAI ships a new one, and hashing it would invalidate every image you already
 have on the day that happens, at your expense. The model that drew each image is
 recorded in its sidecar manifest instead.
+
+`--cache-only` turns the cache into a question rather than an optimisation: serve
+this request if it is already paid for, and exit 7 without spending if it is not.
+That is the check a CI job wants before it starts a build — `spx generate "..."
+--cache-only` tells you whether the asset is covered, and `CACHE_MISS` is an answer,
+not a breakage, in the same way `spx sync --check` reports drift.
+
+Bytes this project already paid for count as a hit even when they still need local
+work. A request whose raw generation is banked but whose crop or variants failed last
+run is re-processed locally and reported as a hit, because serving it spends nothing —
+which is the only thing `--cache-only` is asking about.
 
 One consequence is worth stating plainly: `--model` does **not** promise a fresh
 draw. It decides who draws a *miss*. A request that is already cached is served from

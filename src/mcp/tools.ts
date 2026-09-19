@@ -147,6 +147,13 @@ const IMAGE_PROPERTIES: Record<string, PropertySchema> = {
       "result for the same prompt, not as a retry: a call that failed has no cache entry to skip. " +
       "It does not overwrite anything - a second image is written beside the first as a -v2 sibling.",
   },
+  cache_only: {
+    type: "boolean",
+    description:
+      "Answer only from the cache. If this request has not been drawn before the call fails with " +
+      "CACHE_MISS and spends nothing, instead of generating. The opposite of no_cache, and passing " +
+      "both is refused.",
+  },
   dry_run: {
     type: "boolean",
     description:
@@ -437,6 +444,7 @@ function sharedOptionsFrom(args: Record<string, unknown>, cwd: string): SharedCl
     // which sets `cache: false`. `undefined` and not `true` in the default case, so
     // an absent argument leaves the project config's answer alone.
     cache: args.no_cache === true ? false : undefined,
+    cacheOnly: args.cache_only as boolean | undefined,
     dryRun: args.dry_run as boolean | undefined,
     // The CLI takes "400,800" from a shell that has no arrays. The schema takes the
     // array an agent can actually build, and the one parser stays the CLI's.

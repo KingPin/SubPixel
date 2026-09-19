@@ -43,6 +43,11 @@ export interface SharedCliOptions {
    */
   cache?: boolean;
   /**
+   * Serve only from the cache, and exit 7 rather than spend. For CI, where the
+   * question is "is this image already paid for" and the wrong answer is a charge.
+   */
+  cacheOnly?: boolean;
+  /**
    * `--overwrite` / `--no-overwrite`. Defaults to false: the spec says never
    * overwrite without being told to, and a sibling is written instead.
    */
@@ -186,8 +191,19 @@ export function resolveGenerateDeps(
   // and --overwrite still serves a cache hit.
   const noCache = options.force === true || options.cache === false;
   const overwrite = options.force === true || options.overwrite === true;
+  const cacheOnly = options.cacheOnly === true;
 
-  return { outDir, stateDir, backend, noCache, overwrite, concurrency, stallMs, timeoutMs };
+  return {
+    outDir,
+    stateDir,
+    backend,
+    noCache,
+    cacheOnly,
+    overwrite,
+    concurrency,
+    stallMs,
+    timeoutMs,
+  };
 }
 
 /**

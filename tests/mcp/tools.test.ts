@@ -13,7 +13,9 @@ vi.mock("../../src/cli/doctor.js", async (importOriginal) => ({
 const { TOOLS, HANDLERS, callTool, validateArgs } = await import("../../src/mcp/tools.js");
 const { buildProgram } = await import("../../src/cli/index.js");
 const { createJob, completeJob, jobsDirFor } = await import("../../src/mcp/jobs.js");
-const { ConfigError, AuthExpired, detailsOf } = await import("../../src/core/errors.js");
+const { CacheMiss, ConfigError, AuthExpired, detailsOf } = await import(
+  "../../src/core/errors.js",
+);
 
 const REPORT: DoctorReport = {
   ok: true,
@@ -403,6 +405,30 @@ describe("no_cache", () => {
 
     const images = (await readdir(dir)).filter((name) => name.endsWith(".png")).sort();
     expect(images).toEqual(["fox-v2.png", "fox.png"]);
+  });
+});
+
+describe("cache_only", () => {
+  it("refuses a request the cache does not hold, without reaching a provider", async () => {
+    // The argument has to be wired to the engine's `cacheOnly`, not merely declared
+    // in the schema. A name that reaches nothing validates fine and spends money.
+    const provider = vi.fn(async () => {
+      throw new Error("the provider was called by a cache-only call");
+    }) as never;
+
+    await expect(
+      callTool("generate_image", { prompt: "a red fox", cache_only: true }, { cwd: dir, provider }),
+    ).rejects.toBeInstanceOf(CacheMiss);
+  });
+
+  it("refuses to be passed with no_cache", async () => {
+    await expect(
+      callTool(
+        "generate_image",
+        { prompt: "a red fox", cache_only: true, no_cache: true },
+        { cwd: dir },
+      ),
+    ).rejects.toBeInstanceOf(ConfigError);
   });
 });
 

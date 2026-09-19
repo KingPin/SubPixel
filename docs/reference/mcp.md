@@ -133,7 +133,7 @@ that is the project the server sees.
 Generate an image from a text prompt. `prompt` is required. The optional arguments are
 `reference_images`, `size`, `quality`, `background`, `format`, `exact_size`,
 `transparent`, `variants`, `style`, `model`, `out`, `out_dir`, `backend`, `n`,
-`no_cache`, and `dry_run`.
+`no_cache`, `cache_only`, and `dry_run`.
 
 `reference_images` is reference-guided generation, not in-place pixel editing. `size`,
 `quality`, and `background` are best effort on the subscription backend; `exact_size`
@@ -165,6 +165,11 @@ It is not a retry. A call that failed never reached the cache, so there is nothi
 `no_cache` to skip; retrying a slow call is what `get_image_job` is for. It is also
 separate from overwriting: a bypassed run writes a `-v2` sibling rather than replacing
 the file the first run produced.
+
+`cache_only: true` is the opposite: answer only if this request is already in the
+cache, and fail with `CACHE_MISS` rather than draw it. Nothing is spent either way, so
+it is the cheap way for an agent to find out whether an image is already paid for
+before it decides to ask for one. Passing it with `no_cache` is refused.
 
 Pinning `model` does **not** force a fresh draw. The driver model is deliberately not
 part of the cache key, so a pinned model still serves a hit that some other model
@@ -265,6 +270,7 @@ The code is the same taxonomy the CLI turns into [exit codes](cli.md#exit-codes)
 | `RATE_LIMITED` | 4 | Wait. Retrying immediately makes it worse. |
 | `BACKEND_UNAVAILABLE` | 5 | Transient. Safe to retry. |
 | `DRIFT_DETECTED` | 6 | `sync_assets` with `check` found the images behind the manifest. |
+| `CACHE_MISS` | 7 | `cache_only` was given and this request is not in the cache. Nothing was spent. |
 | `CONTENT_BLOCKED` | 1 | The prompt was refused. Change the prompt; retrying is a second charge. |
 | `MODEL_REJECTED` | 1 | The pinned model refused the request. |
 | `MODEL_UNAVAILABLE` | 1 | The pinned model does not exist or is not reachable. |

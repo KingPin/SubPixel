@@ -104,6 +104,11 @@ version had. Those changes are listed under **Changed** with what they affect.
   greps `FAIL` sees only the reasons the exit code is non-zero.
 - **`spx edit` no longer offers `--concurrency`.** It turns one image into one
   image; there was nothing for the number to do.
+- **SSE parsing reads each chunk once** instead of rescanning the whole buffered
+  line per chunk. The old shape was quadratic in the length of a line, so a large
+  streamed response cost more the longer it got.
+- **`writeImage` hashes the image once per write** rather than once per sibling
+  name tried.
 - **The bare-prompt shorthand needs more than one word.** `spx fox` was rewritten
   to `spx generate fox`, so a mistyped subcommand spent a generation instead of
   reporting a typo. A single word is now reported as an unknown command.
@@ -120,17 +125,6 @@ version had. Those changes are listed under **Changed** with what they affect.
 - **`spx icons` refuses an occupied destination before it builds the pack**,
   rather than after. The refusal came after the work, so a run that could never
   write its output still spent the time and memory to produce it.
-
-### Performance
-
-- **SSE parsing reads each chunk once** instead of rescanning the whole buffered
-  line per chunk, which was quadratic in the length of a line and made a large
-  streamed response cost more the longer it got.
-- **`writeImage` hashes the image once per write** rather than once per sibling
-  name tried.
-
-### Fixed
-
 - **The prompt reaches `codex exec` behind `--`.** `codex exec` has subcommands of
   its own, so a prompt of `review` ran the review subcommand, and `--image` is
   variadic, so a trailing positional could be absorbed into the file list. A

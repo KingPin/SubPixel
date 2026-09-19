@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { ConfigError, ModelUnavailable, OutputError } from "../core/errors.js";
+import { CacheMiss, ConfigError, ModelUnavailable, OutputError } from "../core/errors.js";
 import { createDeadline, type Deadline } from "../core/deadline.js";
 import { withFileLock, type LockHandle } from "../core/fsx.js";
 import { silentLogger, type Logger } from "../core/logger.js";
@@ -74,6 +74,14 @@ export interface GenerateDeps {
   logger?: Logger;
   /** Skip the cache LOOKUP. The result is still stored. */
   noCache?: boolean;
+  /**
+   * Serve this request only if the cache already holds it, and refuse to spend.
+   *
+   * A miss throws `CacheMiss`, which is an ANSWER rather than a failure: exit code
+   * 7, nothing submitted. The opposite of `noCache` in every sense, and the two are
+   * refused together.
+   */
+  cacheOnly?: boolean;
   /** Replace an existing output file instead of writing a `-v2` sibling. */
   overwrite?: boolean;
   /** Whole-request budget in milliseconds, started here, after the slot is held. */
@@ -349,6 +357,32 @@ function provenanceOf(entry: CacheEntry): CacheProvenance | undefined {
   };
 }
 
+/**
+ * Refuse the cache-mode combinations that cannot mean anything.
+ *
+ * Shared by `generate` and by `planGenerate`, which is the point. `generate` is
+ * reached from the CLI, from MCP and from `spx sync`, so the check cannot live at a
+ * caller; and a preview that reports a clean plan for a request the real run refuses
+ * is worse than no preview, so it cannot live only in `generate` either.
+ */
+export function preflightCacheModes(
+  request: Pick<GenerateRequest, "n">,
+  modes: { cacheOnly?: boolean; noCache?: boolean },
+): void {
+  if (!modes.cacheOnly) return;
+  if (modes.noCache) {
+    throw new ConfigError(
+      "--cache-only serves the cache and --no-cache ignores it. Pass one or the other.",
+    );
+  }
+  if ((request.n ?? 1) > 1) {
+    throw new ConfigError(
+      `--cache-only answers for one image, and -n ${request.n} asks for a batch. ` +
+        "The cache is only consulted for a single-image request.",
+    );
+  }
+}
+
 export async function generate(
   request: GenerateRequest,
   deps: GenerateDeps,
@@ -357,6 +391,8 @@ export async function generate(
   // checks are free and deterministic; discovering them after generation costs the
   // user quota for an image they never receive.
   await preflightPostProcessing(request);
+
+  preflightCacheModes(request, deps);
 
   // Ordering matters. The key is built from reference CONTENT, so the files must be
   // read first. Reading them after a cache lookup would mean a hit was decided
@@ -593,6 +629,17 @@ async function runGeneration(
       );
       return finishFromCache(artifact, rawHit.entry, bytes);
     }
+  }
+
+  // The last exit before anything costs money, and deliberately AFTER the raw-bytes
+  // lookup above: bytes this project already paid for and can re-process locally are
+  // a hit, not a miss, because serving them spends nothing. That is the whole
+  // question --cache-only asks.
+  if (deps.cacheOnly) {
+    throw new CacheMiss(
+      `Not in the cache, and --cache-only was given, so nothing was generated. ` +
+        `Run this without --cache-only to draw it. Key ${key.slice(0, 12)}.`,
+    );
   }
 
   // Preflight quota warning. The last run wrote what the backend told it about the

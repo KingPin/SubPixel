@@ -6,7 +6,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ContentBlocked } from "../../src/core/errors.js";
 import type { EventSink } from "../../src/core/events.js";
-import { createMcpServer } from "../../src/mcp/server.js";
+import { createMcpServer, resolveMcpConcurrency } from "../../src/mcp/server.js";
 import type { ToolDeps } from "../../src/mcp/tools.js";
 
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x01, 0x02]);
@@ -343,5 +343,78 @@ describe("the MCP server", () => {
     );
 
     expect(outcome.body.status).toBe("running");
+  });
+});
+
+describe("server-wide concurrency", () => {
+  /** A provider that answers only when the returned release is called. */
+  function held(): { provider: ReturnType<typeof vi.fn>; release: () => void } {
+    let open!: () => void;
+    const gate = new Promise<void>((done) => {
+      open = done;
+    });
+    const provider = vi.fn(async () => {
+      await gate;
+      return IMAGE;
+    });
+    return { provider, release: open };
+  }
+
+  it("runs no more spending calls at once than the config allows", async () => {
+    // Short cut-over so all three calls hand back a job_id and the test can look at
+    // the server while the work is still queued behind the one permit.
+    await writeFile(
+      join(dir, "subpixel.config.json"),
+      JSON.stringify({ mcp: { cutoverMs: 300, concurrency: 1 } }),
+    );
+    const { provider, release } = held();
+    const client = await connect({ provider: provider as never });
+
+    // Different prompts on purpose: the same prompt three times would let the second
+    // and third serve from the cache and never reach the provider at all, which is a
+    // pass for the wrong reason.
+    const calls = await Promise.all(
+      ["a fox", "a badger", "a heron"].map((prompt) =>
+        call(client, "generate_image", { prompt }),
+      ),
+    );
+
+    for (const outcome of calls) expect(outcome.body.status).toBe("running");
+    expect(provider).toHaveBeenCalledTimes(1);
+
+    release();
+    // Let the queue drain before the client closes, so the job writes land inside the
+    // test rather than after it.
+    await vi.waitFor(() => expect(provider).toHaveBeenCalledTimes(3));
+  });
+
+  it("does not make a preview wait behind a generation", async () => {
+    await writeFile(
+      join(dir, "subpixel.config.json"),
+      JSON.stringify({ mcp: { cutoverMs: 300, concurrency: 1 } }),
+    );
+    const { provider, release } = held();
+    const client = await connect({ provider: provider as never });
+
+    // Not awaited: this one holds the only permit for the rest of the test.
+    const blocked = call(client, "generate_image", { prompt: "a fox" });
+    const preview = await call(client, "generate_image", { prompt: "a badger", dry_run: true });
+
+    // Answered inline, with the plan, while the permit is held elsewhere. A queued
+    // preview would have lost the 300ms race and come back as a job instead.
+    expect(preview.body.dryRun).toBe(true);
+    expect(provider).toHaveBeenCalledTimes(1);
+
+    release();
+    await blocked;
+  });
+
+  it("reads the limit from the environment before the config", () => {
+    expect(resolveMcpConcurrency({ mcp: { concurrency: 3 } }, {})).toBe(3);
+    expect(resolveMcpConcurrency({ mcp: { concurrency: 3 } }, { SUBPIXEL_MCP_CONCURRENCY: "8" })).toBe(8);
+    // A misspelt variable falls back rather than throwing. The server is already
+    // answering a host by the time this is read.
+    expect(resolveMcpConcurrency({}, { SUBPIXEL_MCP_CONCURRENCY: "lots" })).toBe(2);
+    expect(resolveMcpConcurrency({}, { SUBPIXEL_MCP_CONCURRENCY: "0" })).toBe(2);
   });
 });

@@ -1,6 +1,6 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DoctorReport } from "../../src/cli/doctor.js";
 
@@ -13,7 +13,9 @@ vi.mock("../../src/cli/doctor.js", async (importOriginal) => ({
 const { TOOLS, HANDLERS, callTool, validateArgs } = await import("../../src/mcp/tools.js");
 const { buildProgram } = await import("../../src/cli/index.js");
 const { createJob, completeJob, jobsDirFor } = await import("../../src/mcp/jobs.js");
-const { ConfigError, AuthExpired, detailsOf } = await import("../../src/core/errors.js");
+const { CacheMiss, ConfigError, AuthExpired, detailsOf } = await import(
+  "../../src/core/errors.js",
+);
 
 const REPORT: DoctorReport = {
   ok: true,
@@ -121,11 +123,20 @@ describe("the tool schemas", () => {
     expect(() => validateArgs("generate_image", { prompt: "a fox", n: 2 })).toThrow(/at most 1/);
   });
 
-  it("exposes no cache-bypass argument on either generating tool", () => {
+  it("offers the cache bypass, and keeps it separate from overwriting", () => {
+    // `no_cache` was deliberately withheld once, on the grounds that an agent given a
+    // bypass will use it. An agent that wants a different picture and has no bypass
+    // appends noise to the prompt instead, which spends the same quota and poisons the
+    // cache with a key nobody will ever hit again.
+    //
+    // `force` and `overwrite` are a different decision and stay out. Bypassing the
+    // cache buys a new image; replacing a file destroys one that is already on disk,
+    // and an agent has no business doing the second because it asked for the first.
     for (const name of ["generate_image", "edit_image"]) {
       const keys = Object.keys(TOOLS.find((tool) => tool.name === name)!.inputSchema.properties);
-      expect(keys).not.toContain("no_cache");
-      expect(keys).not.toContain("force");
+      expect(keys, name).toContain("no_cache");
+      expect(keys, name).not.toContain("force");
+      expect(keys, name).not.toContain("overwrite");
     }
   });
 
@@ -336,6 +347,181 @@ describe("sync_assets", () => {
     const report = await callTool("sync_assets", { check: true }, { cwd: dir });
 
     expect(report).toMatchObject({ drift: true });
+  });
+});
+
+describe("no_cache", () => {
+  const PNG = Buffer.from(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a4944415478" +
+      "9c6360000002000100ffff03000006000557bfabd40000000049454e44ae426082",
+    "hex",
+  );
+
+  /**
+   * Counts how many times it was asked for an image, and hands back a DIFFERENT one
+   * each time. A provider that returned identical bytes twice would exercise
+   * `writeImage`'s identical-content path instead of the sibling path, which is not
+   * what a second draw looks like.
+   */
+  function counting() {
+    let draw = 0;
+    return vi.fn(async () => ({
+      images: [Buffer.concat([PNG, Buffer.from([draw++])])],
+      model: "gpt-5",
+      effectivePrompt: "a red fox",
+    }));
+  }
+
+  it("draws again for a request the cache already holds", async () => {
+    const provider = counting();
+    const args = { prompt: "a red fox" };
+
+    await callTool("generate_image", args, { cwd: dir, provider: provider as never });
+    await callTool("generate_image", args, { cwd: dir, provider: provider as never });
+    // The second call is the control: without it a bypass that did nothing would still
+    // look like it worked, because every call would be a miss.
+    expect(provider).toHaveBeenCalledTimes(1);
+
+    await callTool(
+      "generate_image",
+      { ...args, no_cache: true },
+      { cwd: dir, provider: provider as never },
+    );
+    expect(provider).toHaveBeenCalledTimes(2);
+  });
+
+  it("writes a sibling rather than replacing what the first call produced", async () => {
+    // Bypassing the cache buys a new image. It does not authorise destroying the one
+    // already on disk, and no MCP argument does.
+    const provider = counting();
+    const args = { prompt: "a red fox", out: "fox.png" };
+
+    await callTool("generate_image", args, { cwd: dir, provider: provider as never });
+    await callTool(
+      "generate_image",
+      { ...args, no_cache: true },
+      { cwd: dir, provider: provider as never },
+    );
+
+    const images = (await readdir(dir)).filter((name) => name.endsWith(".png")).sort();
+    expect(images).toEqual(["fox-v2.png", "fox.png"]);
+  });
+});
+
+describe("cache_only", () => {
+  it("refuses a request the cache does not hold, without reaching a provider", async () => {
+    // The argument has to be wired to the engine's `cacheOnly`, not merely declared
+    // in the schema. A name that reaches nothing validates fine and spends money.
+    const provider = vi.fn(async () => {
+      throw new Error("the provider was called by a cache-only call");
+    }) as never;
+
+    await expect(
+      callTool("generate_image", { prompt: "a red fox", cache_only: true }, { cwd: dir, provider }),
+    ).rejects.toBeInstanceOf(CacheMiss);
+  });
+
+  it("refuses to be passed with no_cache", async () => {
+    await expect(
+      callTool(
+        "generate_image",
+        { prompt: "a red fox", cache_only: true, no_cache: true },
+        { cwd: dir },
+      ),
+    ).rejects.toBeInstanceOf(ConfigError);
+  });
+});
+
+/** Enough of a PNG that `loadReferences` accepts it, as the real run would. */
+const PNG_HEADER = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]);
+
+describe("dry_run", () => {
+  // The provider throws rather than returning a fake image. A preview that reached a
+  // backend would look like a pass against a stub, and the whole point of the flag is
+  // that the call costs nothing.
+  const explode = vi.fn(async () => {
+    throw new Error("the provider was called by a dry run");
+  }) as never;
+
+  it("previews generate_image without reaching a provider or writing a file", async () => {
+    const plan = (await callTool(
+      "generate_image",
+      { prompt: "a red fox", dry_run: true },
+      { cwd: dir, provider: explode },
+    )) as { dryRun: boolean; cacheKey: string; effectivePrompt: string; outDir: string };
+
+    expect(plan.dryRun).toBe(true);
+    expect(plan.effectivePrompt).toContain("a red fox");
+    expect(plan.cacheKey).toMatch(/^[0-9a-f]{64}$/);
+    // Nothing on disk either. `.subpixel` is the server's own state directory and is
+    // allowed to exist; an image is not.
+    const written = (await readdir(dir)).filter((name) => name !== ".subpixel");
+    expect(written).toEqual([]);
+  });
+
+  it("previews edit_image too", async () => {
+    // Both generating tools, because the bypass lives in the shared half and a flag
+    // wired into only one of them is the failure that would not be noticed.
+    // A real PNG signature: `planGenerate` reads and sniffs the reference exactly
+    // as the real run does, which is the point -- the key it previews has to be the
+    // key the real call looks up.
+    await writeFile(join(dir, "hero.png"), PNG_HEADER);
+    const plan = (await callTool(
+      "edit_image",
+      { image: "hero.png", instruction: "make it blue", dry_run: true },
+      { cwd: dir, provider: explode },
+    )) as { dryRun: boolean };
+
+    expect(plan.dryRun).toBe(true);
+  });
+
+  it("refuses a combination the real call would refuse", async () => {
+    // A preview exists to answer "what would happen", and "this call is refused" is
+    // one of the answers. Reporting a clean plan for a request `generate` rejects
+    // sends an agent off to make a call that cannot run.
+    await expect(
+      callTool(
+        "generate_image",
+        { prompt: "a red fox", dry_run: true, cache_only: true, no_cache: true },
+        { cwd: dir, provider: explode },
+      ),
+    ).rejects.toBeInstanceOf(ConfigError);
+  });
+
+  it("keeps the absolute path off the wire", async () => {
+    // The reader here is a model, not the person who owns the directory. `outDir` is
+    // composed from the project config rather than supplied by the caller, so an
+    // absolute one hands over the account name and the layout above the project --
+    // the same thing `publicDoctorReport` withholds from the doctor output.
+    await writeFile(join(dir, "hero.png"), PNG_HEADER);
+    const plan = (await callTool(
+      "edit_image",
+      { image: "hero.png", instruction: "make it blue", dry_run: true },
+      { cwd: dir, provider: explode },
+    )) as { outDir: string; referenceImages?: string[] };
+
+    expect(isAbsolute(plan.outDir)).toBe(false);
+    expect(plan.outDir).not.toContain(dir);
+    for (const reference of plan.referenceImages ?? []) {
+      expect(isAbsolute(reference), reference).toBe(false);
+    }
+  });
+
+  it("previews the key the real call would look up", async () => {
+    // A preview whose key differs from the real run's key answers a question nobody
+    // asked. Same request, dry and wet, must hash the same.
+    const a = (await callTool(
+      "generate_image",
+      { prompt: "a red fox", size: "1024x1024", dry_run: true },
+      { cwd: dir, provider: explode },
+    )) as { cacheKey: string };
+    const b = (await callTool(
+      "generate_image",
+      { prompt: "a red fox", size: "1024x1024", dry_run: true },
+      { cwd: dir, provider: explode },
+    )) as { cacheKey: string };
+
+    expect(a.cacheKey).toBe(b.cacheKey);
   });
 });
 

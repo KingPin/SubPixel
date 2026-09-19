@@ -1,8 +1,9 @@
-import { chmod, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  CacheMiss,
   ConfigError,
   ContentBlocked,
   ModelRejected,
@@ -701,5 +702,66 @@ describe.runIf(await sharpAvailable())("responsive variants", () => {
     ) as Record<string, unknown>;
     expect(sidecar["variants"]).toHaveLength(1);
     expect(sidecar["skippedVariants"]).toEqual([800]);
+  });
+});
+
+describe("cacheOnly", () => {
+  it("refuses to spend for a request the cache does not hold", async () => {
+    const provider = vi.fn(okProvider);
+    const failure = await generate({ prompt: "a fox" }, deps(provider, { cacheOnly: true })).catch(
+      (err: unknown) => err,
+    );
+
+    expect(failure).toBeInstanceOf(CacheMiss);
+    // Exit 7, like `sync --check`'s 6: an answer a CI job gates on, not a breakage.
+    expect((failure as CacheMiss).exitCode).toBe(7);
+    expect((failure as CacheMiss).submission).toBe("not-submitted");
+    expect(provider).not.toHaveBeenCalled();
+  });
+
+  it("serves a request the cache does hold", async () => {
+    // The paired half. Without it a --cache-only that threw unconditionally would
+    // still pass the test above.
+    await generate({ prompt: "a fox" }, deps(okProvider));
+
+    const provider = vi.fn(okProvider);
+    const result = await generate({ prompt: "a fox" }, deps(provider, { cacheOnly: true }));
+
+    expect(result.cached).toBe(true);
+    expect(provider).not.toHaveBeenCalled();
+  });
+
+  it("counts locally re-processable banked bytes as a hit", async () => {
+    // The raw bank holds bytes this project already paid for. A run that failed
+    // after generation -- in sharp, in mkdir, on a full disk -- leaves them there.
+    // Re-processing them locally spends nothing, which is the only question
+    // --cache-only asks, so it is a hit rather than a miss.
+    const provider = vi.fn(okProvider);
+    await generate({ prompt: "a fox" }, deps(provider));
+    // Drop the finished entry, keep the raw bank.
+    const entries = await readdir(join(stateDir, "cache"));
+    const rawName = `${rawCacheKey({ prompt: "a fox" })}.json`;
+    for (const name of entries) {
+      if (name !== rawName) await rm(join(stateDir, "cache", name));
+    }
+
+    const after = vi.fn(okProvider);
+    const result = await generate({ prompt: "a fox" }, deps(after, { cacheOnly: true }));
+
+    expect(result.cached).toBe(true);
+    expect(after).not.toHaveBeenCalled();
+  });
+
+  it("refuses the combinations that cannot mean anything", async () => {
+    const provider = vi.fn(okProvider);
+    // Checked in generate() rather than in the CLI: MCP and `spx sync` reach this
+    // function too, and a guard in one caller is a guard the others are missing.
+    await expect(
+      generate({ prompt: "a fox" }, deps(provider, { cacheOnly: true, noCache: true })),
+    ).rejects.toBeInstanceOf(ConfigError);
+    await expect(
+      generate({ prompt: "a fox", n: 2 }, deps(provider, { cacheOnly: true })),
+    ).rejects.toBeInstanceOf(ConfigError);
+    expect(provider).not.toHaveBeenCalled();
   });
 });

@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { basename, join, relative } from "node:path";
 import { loadConfig } from "../config/load.js";
 import type { SubpixelConfig } from "../config/schema.js";
 import { ConfigError, withDetails } from "../core/errors.js";
@@ -28,6 +28,7 @@ import { checkAssets } from "../cli/sync.js";
 import { collectStyleReport, resolveStyle } from "../cli/styles.js";
 import { toJsonResult } from "../engine/emit.js";
 import { generate, type ProviderFn } from "../engine/generate.js";
+import { planGenerate } from "../engine/plan.js";
 import { jobsDirFor, readJob } from "./jobs.js";
 
 /**
@@ -137,6 +138,31 @@ const IMAGE_PROPERTIES: Record<string, PropertySchema> = {
     description: "Number of images. Only 1 is accepted here: every image costs subscription quota.",
     minimum: 1,
     maximum: 1,
+  },
+  no_cache: {
+    type: "boolean",
+    description:
+      "Skip the cache lookup and draw this request again. THIS SPENDS QUOTA every time, " +
+      "including for a request that has already been drawn. Use it when you want a different " +
+      "result for the same prompt. DO NOT use it to retry a failed call: this tool banks the bytes " +
+      "it paid for before post-processing them, so a call that failed after the image was drawn is " +
+      "often recovered by an ordinary retry at no cost, and no_cache skips those banked bytes too " +
+      "and pays for the same picture twice. " +
+      "It does not overwrite anything - a second image is written beside the first as a -v2 sibling.",
+  },
+  cache_only: {
+    type: "boolean",
+    description:
+      "Answer only from the cache. If this request has not been drawn before the call fails with " +
+      "CACHE_MISS and spends nothing, instead of generating. The opposite of no_cache, and passing " +
+      "both is refused.",
+  },
+  dry_run: {
+    type: "boolean",
+    description:
+      "Report what this call would do - driver model, backend chain, effective prompt, cache key, " +
+      "output directory - and stop. Makes no network call and spends no quota. A preview is not a " +
+      "reservation: nothing is held, and the cache can change before the real call.",
   },
 };
 
@@ -377,6 +403,22 @@ function cwdOf(deps: ToolDeps): string {
 }
 
 /**
+ * A path an agent can act on without being told where this machine keeps its files.
+ *
+ * The same rule `publicDoctorReport` applies to the doctor output, for the same
+ * reason: the useful half of a path is which directory inside the project, and the
+ * half that is nobody's business is the account name above it. Relative while the
+ * path stays inside the project, because that form is both safe and the more useful
+ * one; a basename when it escapes, because the relative form of an outside path is a
+ * description of the layout above the project.
+ */
+function projectRelative(cwd: string, path: string): string {
+  const rel = relative(cwd, path);
+  if (rel === "") return ".";
+  return rel.startsWith("..") ? basename(path) : rel;
+}
+
+/**
  * The tools this build can run.
  *
  * Every entry returns the object the matching `--json` command prints, unchanged.
@@ -417,6 +459,12 @@ function sharedOptionsFrom(args: Record<string, unknown>, cwd: string): SharedCl
     outDir: outDir === undefined ? undefined : within(cwd, outDir, "out_dir"),
     backend: args.backend as string | undefined,
     transparent: args.transparent as boolean | undefined,
+    // `cache`, not `noCache`: the CLI field is named for commander's `--no-cache`,
+    // which sets `cache: false`. `undefined` and not `true` in the default case, so
+    // an absent argument leaves the project config's answer alone.
+    cache: args.no_cache === true ? false : undefined,
+    cacheOnly: args.cache_only as boolean | undefined,
+    dryRun: args.dry_run as boolean | undefined,
     // The CLI takes "400,800" from a shell that has no arrays. The schema takes the
     // array an agent can actually build, and the one parser stays the CLI's.
     variants: variants === undefined ? undefined : variants.join(","),
@@ -450,6 +498,31 @@ async function runImageTool(
   // called `generate()` with hand-built dependencies would spend past the project's
   // own `budget.maxImagesPerRun`.
   const generateDeps = resolveGenerateDeps(request, { ...options, config, cwd });
+
+  // Before `generate` is named, and handed none of `deps`. `planGenerate` takes no
+  // provider and has no argument that could carry one, so the zero-quota promise in
+  // the schema is a property of the code rather than of this branch being correct.
+  if (options.dryRun === true) {
+    const plan = await planGenerate(request, {
+      outDir: generateDeps.outDir,
+      backend: generateDeps.backend,
+      model: options.model,
+      noCache: generateDeps.noCache,
+      cacheOnly: generateDeps.cacheOnly,
+      overwrite: generateDeps.overwrite,
+    });
+    // The CLI prints the plan to the person who owns the directory, so it keeps the
+    // absolute paths. Here the reader is a model, and `outDir` was composed from the
+    // project config rather than supplied by the caller.
+    const cwd = cwdOf(deps);
+    return {
+      ...plan,
+      outDir: projectRelative(cwd, plan.outDir),
+      ...(plan.referenceImages && {
+        referenceImages: plan.referenceImages.map((path) => projectRelative(cwd, path)),
+      }),
+    };
+  }
 
   const result = await generate(request, {
     ...generateDeps,

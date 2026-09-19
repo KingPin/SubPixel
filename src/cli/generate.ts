@@ -12,14 +12,9 @@ import type {
   StyleDefinition,
 } from "../core/types.js";
 import type { SubpixelConfig } from "../config/schema.js";
-import { cacheKey } from "../engine/cache.js";
 import { emit, type EmitFormat } from "../engine/emit.js";
-import { generate, preflightPostProcessing, type GenerateDeps } from "../engine/generate.js";
-import { augmentPrompt } from "../engine/prompt.js";
-import { loadReferences } from "../engine/references.js";
-import { hasCodexBinary } from "../providers/codex-exec.js";
-import { resolveModel } from "../providers/models.js";
-import { resolveChain } from "../providers/resolve.js";
+import { generate, type GenerateDeps } from "../engine/generate.js";
+import { planGenerate } from "../engine/plan.js";
 import { parseBackend, parseCount, parseSeconds } from "./options.js";
 import { parseVariants } from "../engine/variants.js";
 import { resolveStyle } from "./styles.js";
@@ -47,6 +42,11 @@ export interface SharedCliOptions {
    * field for the negated flag is a silent no-op, so the field is named `cache`.
    */
   cache?: boolean;
+  /**
+   * Serve only from the cache, and exit 7 rather than spend. For CI, where the
+   * question is "is this image already paid for" and the wrong answer is a charge.
+   */
+  cacheOnly?: boolean;
   /**
    * `--overwrite` / `--no-overwrite`. Defaults to false: the spec says never
    * overwrite without being told to, and a sibling is written instead.
@@ -191,8 +191,19 @@ export function resolveGenerateDeps(
   // and --overwrite still serves a cache hit.
   const noCache = options.force === true || options.cache === false;
   const overwrite = options.force === true || options.overwrite === true;
+  const cacheOnly = options.cacheOnly === true;
 
-  return { outDir, stateDir, backend, noCache, overwrite, concurrency, stallMs, timeoutMs };
+  return {
+    outDir,
+    stateDir,
+    backend,
+    noCache,
+    cacheOnly,
+    overwrite,
+    concurrency,
+    stallMs,
+    timeoutMs,
+  };
 }
 
 /**
@@ -246,28 +257,9 @@ export async function runGenerateRequest(
   options: GenerateCliOptions & { config: SubpixelConfig },
 ): Promise<void> {
   const deps = resolveGenerateDeps(request, options);
-  const { outDir, backend, noCache, overwrite } = deps;
+  const { outDir, backend, noCache, cacheOnly, overwrite } = deps;
 
   if (options.dryRun) {
-    // The same boundary check the real run makes, and for the same reason it exists:
-    // a preview whose whole job is "tell me what would happen before I spend quota"
-    // is worth nothing if it reports a clean plan for a request that cannot run.
-    // Without it `--exact-size nonsense --dry-run` exited 0 and a malformed `--size`
-    // failed later, inside aspect-ratio arithmetic, with no flag named.
-    await preflightPostProcessing(request);
-
-    const resolved = await resolveModel({ override: options.model });
-    const chain = resolveChain({
-      hasCodexBinary: await hasCodexBinary(),
-      requested: backend,
-    });
-    // Read locally, exactly as `generate()` does before it builds the key. Without
-    // this the previewed key is a hash of a request with no reference digests in
-    // it, so a reference-based dry run prints a key that can never match the entry
-    // the real run looks up — and reports a clean plan for a missing reference.
-    // Local file reads only: --dry-run still makes no network call and writes nothing.
-    const references = await loadReferences(request.referenceImages);
-
     // The WHOLE document, not just the prompt. `outDir` and every reference path is
     // a string the user composed, and a credential pasted into one of them would
     // otherwise go straight to stdout. Same rule as `emitSync`: redacting the
@@ -275,22 +267,14 @@ export async function runGenerateRequest(
     process.stdout.write(
       redact(
         `${JSON.stringify(
-          {
-            dryRun: true,
-            chain,
-            model: resolved.slug,
-            modelSource: resolved.source,
-            effectivePrompt: augmentPrompt(request.prompt, request),
+          await planGenerate(request, {
             outDir,
-            cacheKey: cacheKey({
-              ...request,
-              referenceHashes: references.map((reference) => reference.sha256),
-            }),
-            ...(request.referenceImages && { referenceImages: request.referenceImages }),
-            // Printed so --force can be verified without spending anything.
+            backend,
+            model: options.model,
             noCache,
+            cacheOnly,
             overwrite,
-          },
+          }),
           null,
           2,
         )}\n`,

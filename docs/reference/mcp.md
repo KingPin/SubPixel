@@ -132,15 +132,53 @@ that is the project the server sees.
 
 Generate an image from a text prompt. `prompt` is required. The optional arguments are
 `reference_images`, `size`, `quality`, `background`, `format`, `exact_size`,
-`transparent`, `variants`, `style`, `model`, `out`, `out_dir`, `backend`, and `n`.
+`transparent`, `variants`, `style`, `model`, `out`, `out_dir`, `backend`, `n`,
+`no_cache`, `cache_only`, and `dry_run`.
 
 `reference_images` is reference-guided generation, not in-place pixel editing. `size`,
 `quality`, and `background` are best effort on the subscription backend; `exact_size`
 is the one that is guaranteed, and it needs `sharp`.
 
+`dry_run: true` reports what the call would do — the backend chain, the driver model
+and where it came from, the effective prompt after the style is applied, the output
+directory, and the cache key — and then stops. It makes no network call, spends
+nothing, and writes nothing. It is the argument to reach for before an expensive
+call, and the cache key it reports is the key the real call will look up, so an agent
+can tell a hit from a miss without paying to find out.
+
+A preview is not a reservation. Nothing is held: another process can fill or empty the
+cache between the preview and the real call, and the driver model can rotate.
+
 `n` accepts only 1. Every image costs subscription quota, and a tool that could be
-asked for eight of them is a tool that will be. There is no cache-bypass argument for
-the same reason: an agent that can retry for free will.
+asked for eight of them is a tool that will be.
+
+`no_cache: true` skips the cache lookup and draws the request again, which spends
+quota every time. Earlier releases withheld it on the grounds that an agent given a
+bypass will use it. That reasoning does not survive contact: an agent that wants a
+different picture for the same prompt and has no bypass appends noise to the prompt
+instead, which spends exactly the same quota and leaves a junk entry in the cache
+under a prompt nobody will type again. The argument is named for what it does, its
+description says it spends, and the reported `cached` field still tells the host which
+calls were free.
+
+It is not a retry, and using it as one is the expensive mistake. Generation banks the
+bytes it paid for before post-processing, so a call that failed *after* the image was
+drawn does leave cache data, and an ordinary retry re-processes those bytes locally
+for nothing. `no_cache` skips the bank too and buys the picture a second time.
+Retrying a slow call is what `get_image_job` is for.
+
+It is also separate from overwriting: a bypassed run writes a `-v2` sibling rather
+than replacing the file the first run produced.
+
+`cache_only: true` is the opposite: answer only if this request is already in the
+cache, and fail with `CACHE_MISS` rather than draw it. Nothing is spent either way, so
+it is the cheap way for an agent to find out whether an image is already paid for
+before it decides to ask for one. Passing it with `no_cache` is refused.
+
+Pinning `model` does **not** force a fresh draw. The driver model is deliberately not
+part of the cache key, so a pinned model still serves a hit that some other model
+drew. Pass `model` with `no_cache: true` to get this model's own work; `model` alone
+only decides who draws a miss.
 
 `backend` does not accept `api`. The paid OpenAI backend is not implemented in this
 release, on any surface. When it ships it will be a deliberate, local CLI decision,
@@ -203,6 +241,25 @@ enough that a cache hit returns the image rather than a job — and then returns
 The cut-over is 5 seconds by default. Set `mcp.cutoverMs` in the project config, or
 `SUBPIXEL_MCP_CUTOVER_MS` in the environment, which wins.
 
+### How many run at once
+
+The server runs 2 spending tool calls at a time. A third waits its turn — it still
+gets a job record and still gets a `job_id` at the cut-over, so the host is never
+held open by the queue, only by its own work. Set `mcp.concurrency` in the project
+config, or `SUBPIXEL_MCP_CONCURRENCY` in the environment, which wins.
+
+This is a process-wide budget, and it is a different number from the top-level
+`concurrency` key, which bounds one batch. The backend is one personal subscription;
+several agents each running their own batch is how that subscription gets rate
+limited.
+
+Calls that cannot spend do not queue: `dry_run`, `cache_only`, `sync_assets` with
+`check`, and every read-only tool run immediately however busy the server is. The
+limit is on spending, not on answering.
+
+It is in-process only. Two `spx mcp` servers, or a server and a CLI run, do not see
+each other's work.
+
 ### Poll, do not retry
 
 A tool call that returns a `job_id` has not failed. The work is still running, and the
@@ -236,6 +293,7 @@ The code is the same taxonomy the CLI turns into [exit codes](cli.md#exit-codes)
 | `RATE_LIMITED` | 4 | Wait. Retrying immediately makes it worse. |
 | `BACKEND_UNAVAILABLE` | 5 | Transient. Safe to retry. |
 | `DRIFT_DETECTED` | 6 | `sync_assets` with `check` found the images behind the manifest. |
+| `CACHE_MISS` | 7 | `cache_only` was given and this request is not in the cache. Nothing was spent. |
 | `CONTENT_BLOCKED` | 1 | The prompt was refused. Change the prompt; retrying is a second charge. |
 | `MODEL_REJECTED` | 1 | The pinned model refused the request. |
 | `MODEL_UNAVAILABLE` | 1 | The pinned model does not exist or is not reachable. |

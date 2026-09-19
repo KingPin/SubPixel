@@ -174,6 +174,21 @@ export class DriftDetected extends SubpixelError {
 }
 
 /**
+ * `--cache-only` was asked for an image the cache does not hold.
+ *
+ * Like `DriftDetected`, this is not a failure of the tool. It is the tool's ANSWER,
+ * delivered as an exit code so a CI job can gate on it: "this image would have cost
+ * money, and you told me not to spend any". Nothing was submitted and nothing was
+ * spent -- the run stops at the same point a preview does.
+ */
+export class CacheMiss extends SubpixelError {
+  readonly code: string = "CACHE_MISS";
+  readonly submission: Submission = "not-submitted";
+  protected override readonly fallbackUseful: boolean = false;
+  override readonly exitCode: number = 7;
+}
+
+/**
  * A local failure that happened AFTER a successful generation: post-processing,
  * writing, or sidecar authoring. The bytes exist and must not be regenerated.
  */

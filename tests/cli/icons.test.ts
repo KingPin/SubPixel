@@ -7,6 +7,7 @@ import { sharpAvailable } from "../../src/engine/sharpx.js";
 import { TINY_PNG_BASE64 } from "../fixtures/tiny.png.js";
 
 const hasSharp = await sharpAvailable();
+const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 
 async function fixture(): Promise<{ source: string; outDir: string }> {
   const dir = await mkdtemp(join(tmpdir(), "subpixel-icons-"));
@@ -36,6 +37,17 @@ describe.runIf(hasSharp)("runIcons", () => {
     await writeFile(join(outDir, "favicon.ico"), "old");
     await expect(runIcons(source, { outDir })).rejects.toThrow(/--overwrite/);
     expect(await readdir(outDir)).toEqual(["favicon.ico"]);
+  });
+
+  it("refuses before it builds the pack, not after", async () => {
+    // A PNG signature over bytes sharp cannot decode. If the destination check runs
+    // first, the refusal is the OutputError below; if the pack is built first, sharp
+    // throws instead and the run has spent six resizes to arrive at the same no.
+    const { source, outDir } = await fixture();
+    await writeFile(source, Buffer.concat([Buffer.from(PNG_MAGIC), Buffer.alloc(64, 7)]));
+    await mkdir(outDir, { recursive: true });
+    await writeFile(join(outDir, "favicon.ico"), "old");
+    await expect(runIcons(source, { outDir })).rejects.toThrow(/--overwrite/);
   });
 
   it("emits one JSON object listing every path", async () => {

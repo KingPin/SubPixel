@@ -25,6 +25,15 @@ export const ICON_PACK: IconSpec[] = [
 /** The sizes packed inside favicon.ico. */
 const ICO_SIZES = [16, 32, 48];
 
+/**
+ * Every file `buildIconPack` produces, named without producing any of them.
+ *
+ * A caller that has to decide whether it may write the pack should not have to
+ * build the pack to find out what it would be called. Kept honest by a test that
+ * runs `buildIconPack` and compares.
+ */
+export const ICON_PACK_FILES: string[] = [...ICON_PACK.map((spec) => spec.name), "favicon.ico"];
+
 export interface IconFile {
   name: string;
   data: Buffer;

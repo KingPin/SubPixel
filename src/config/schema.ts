@@ -36,8 +36,12 @@ export interface SubpixelConfig {
    * host's request open and hands back a `job_id` instead. Hosts disagree about how
    * long a tool may take, so the number has to be tunable per project. Overridden by
    * `SUBPIXEL_MCP_CUTOVER_MS`.
+   *
+   * `concurrency` is how many spending tool calls the server runs at once, across
+   * every agent talking to it. `concurrency` at the top of this file bounds ONE
+   * batch; this bounds the whole process. Overridden by `SUBPIXEL_MCP_CONCURRENCY`.
    */
-  mcp?: { cutoverMs?: number };
+  mcp?: { cutoverMs?: number; concurrency?: number };
   styles?: Record<string, StyleDefinition>;
 }
 
@@ -214,10 +218,15 @@ export function validateConfig(
       fail(source, "mcp", "an object", mcp);
     }
     const cutover = (mcp as Record<string, unknown>).cutoverMs;
-    config.mcp =
-      cutover === undefined
-        ? {}
-        : { cutoverMs: asPositiveInt(cutover, source, "mcp.cutoverMs") };
+    const concurrency = (mcp as Record<string, unknown>).concurrency;
+    config.mcp = {
+      ...(cutover !== undefined && {
+        cutoverMs: asPositiveInt(cutover, source, "mcp.cutoverMs"),
+      }),
+      ...(concurrency !== undefined && {
+        concurrency: asPositiveInt(concurrency, source, "mcp.concurrency"),
+      }),
+    };
   }
   if (input.styles !== undefined) {
     const styles = input.styles;

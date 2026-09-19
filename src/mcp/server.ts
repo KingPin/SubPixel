@@ -6,6 +6,8 @@ import { loadConfig } from "../config/load.js";
 import { detailsOf, SubpixelError } from "../core/errors.js";
 import { redact } from "../core/redact.js";
 import { packageVersion } from "../core/version.js";
+import { createSemaphore, type Semaphore } from "../engine/semaphore.js";
+import type { SubpixelConfig } from "../config/schema.js";
 import { createJob, completeJob, failJob, jobsDirFor, reapOrphans } from "./jobs.js";
 import { createProgressReporter, resolveCutoverMs, type ProgressToken } from "./progress.js";
 import { TOOLS, callTool, type ToolDeps } from "./tools.js";
@@ -19,6 +21,69 @@ import { TOOLS, callTool, type ToolDeps } from "./tools.js";
  */
 const LONG_TOOLS = new Set(TOOLS.filter((tool) => !tool.readOnly).map((tool) => tool.name));
 
+/** Concurrent spending tool calls allowed across the whole server. */
+const DEFAULT_MCP_CONCURRENCY = 2;
+
+/**
+ * How many spending calls this server runs at once.
+ *
+ * Same precedence and same forgiveness as `resolveCutoverMs`: environment first,
+ * then the project config, then a default, and a malformed value falls back rather
+ * than refusing to start a server the host is already talking to.
+ */
+export function resolveMcpConcurrency(
+  config: SubpixelConfig,
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  const raw = env.SUBPIXEL_MCP_CONCURRENCY;
+  if (raw !== undefined) {
+    const parsed = Number(raw);
+    if (Number.isInteger(parsed) && parsed > 0) return parsed;
+  }
+  return config.mcp?.concurrency ?? DEFAULT_MCP_CONCURRENCY;
+}
+
+/**
+ * Whether this call can reach a backend.
+ *
+ * The limit exists to bound concurrent SPENDING, so the arguments that answer
+ * without one are excluded: `dry_run` and `cache_only` return before any provider is
+ * named, and `sync_assets` with `check` only reports drift. Queueing a free question
+ * behind two six-minute generations is a limit doing the opposite of its job.
+ *
+ * Read off the arguments rather than trusted from the tool name because the same
+ * tool is both: `generate_image` spends, and `generate_image` with `dry_run` does
+ * not.
+ */
+function maySpend(name: string, args: unknown): boolean {
+  if (!LONG_TOOLS.has(name)) return false;
+  const record = (typeof args === "object" && args !== null ? args : {}) as Record<string, unknown>;
+  return record.dry_run !== true && record.cache_only !== true && record.check !== true;
+}
+
+/**
+ * Run `work` holding a permit, when it is the kind of work the permit is for.
+ *
+ * Wrapped around the call rather than around `runTool` so the permit is taken
+ * INSIDE the job: a queued call still creates its record, still hands the host a
+ * `job_id` at the cut-over, and waits for its turn in the background. Acquiring
+ * earlier would hold the host's request open for the length of the queue.
+ */
+async function withPermit<T>(
+  name: string,
+  args: unknown,
+  gate: Semaphore | undefined,
+  work: () => Promise<T>,
+): Promise<T> {
+  if (!gate || !maySpend(name, args)) return work();
+  const release = await gate.acquire();
+  try {
+    return await work();
+  } finally {
+    release();
+  }
+}
+
 export interface RunToolOptions {
   /** How long the job path waits before handing back a `job_id`. */
   cutoverMs: number;
@@ -29,6 +94,13 @@ export interface RunToolOptions {
    * wants progress, and it is watching notifications rather than a clock.
    */
   streaming: boolean;
+  /**
+   * The server-wide spending limit. One per server, shared by every call.
+   *
+   * Optional because the tests drive `runTool` directly and most of them are not
+   * about queueing; absent means unlimited, which is what those tests want.
+   */
+  gate?: Semaphore;
 }
 
 /** The envelope a host gets when the work outlived the cut-over. */
@@ -51,7 +123,9 @@ export async function runTool(
   deps: ToolDeps,
   options: RunToolOptions,
 ): Promise<unknown> {
-  if (options.streaming || !LONG_TOOLS.has(name)) return callTool(name, args, deps);
+  if (options.streaming || !LONG_TOOLS.has(name)) {
+    return withPermit(name, args, options.gate, () => callTool(name, args, deps));
+  }
 
   const jobsDir = deps.jobsDir ?? jobsDirFor(join(deps.cwd ?? process.cwd(), ".subpixel"));
   const job = await createJob(jobsDir, name);
@@ -60,7 +134,7 @@ export async function runTool(
   // error — answer the host directly instead of making it poll for something this
   // call already has.
   let settled: { ok: true; value: unknown } | { ok: false; error: unknown } | undefined;
-  const work = callTool(name, args, { ...deps, jobsDir })
+  const work = withPermit(name, args, options.gate, () => callTool(name, args, { ...deps, jobsDir }))
     .then(
       async (value) => {
         settled = { ok: true, value };
@@ -154,6 +228,9 @@ export async function createMcpServer(deps: ToolDeps = {}): Promise<Server> {
 
   const { config } = await loadConfig({ cwd });
   const cutoverMs = resolveCutoverMs(config);
+  // One per server, not per call: the point is a budget for the process, which is
+  // the only thing that knows how many agents are talking to it at once.
+  const gate = createSemaphore(resolveMcpConcurrency(config));
 
   const server = new Server(
     { name: "subpixel", version: await packageVersion() },
@@ -183,7 +260,7 @@ export async function createMcpServer(deps: ToolDeps = {}): Promise<Server> {
           request.params.name,
           request.params.arguments,
           { ...deps, jobsDir, cwd, onEvent: reporter?.onEvent },
-          { cutoverMs, streaming: reporter !== undefined },
+          { cutoverMs, streaming: reporter !== undefined, gate },
         ),
       );
     } catch (err) {

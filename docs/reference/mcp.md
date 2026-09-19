@@ -237,6 +237,25 @@ enough that a cache hit returns the image rather than a job — and then returns
 The cut-over is 5 seconds by default. Set `mcp.cutoverMs` in the project config, or
 `SUBPIXEL_MCP_CUTOVER_MS` in the environment, which wins.
 
+### How many run at once
+
+The server runs 2 spending tool calls at a time. A third waits its turn — it still
+gets a job record and still gets a `job_id` at the cut-over, so the host is never
+held open by the queue, only by its own work. Set `mcp.concurrency` in the project
+config, or `SUBPIXEL_MCP_CONCURRENCY` in the environment, which wins.
+
+This is a process-wide budget, and it is a different number from the top-level
+`concurrency` key, which bounds one batch. The backend is one personal subscription;
+several agents each running their own batch is how that subscription gets rate
+limited.
+
+Calls that cannot spend do not queue: `dry_run`, `cache_only`, `sync_assets` with
+`check`, and every read-only tool run immediately however busy the server is. The
+limit is on spending, not on answering.
+
+It is in-process only. Two `spx mcp` servers, or a server and a CLI run, do not see
+each other's work.
+
 ### Poll, do not retry
 
 A tool call that returns a `job_id` has not failed. The work is still running, and the

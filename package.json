@@ -1,6 +1,6 @@
 {
   "name": "subpixel",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Image generation and editing for AI coding agents, powered by your existing ChatGPT/Codex subscription.",
   "license": "Apache-2.0",
   "author": "KingPin <28669+KingPin@users.noreply.github.com>",
@@ -44,12 +44,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "commander": "^15.0.0",
     "yaml": "^2.9.1"
   },
   "peerDependencies": {
-    "sharp": "^0.35.4"
+    "sharp": "^0.35.5"
   },
   "peerDependenciesMeta": {
     "sharp": {
@@ -58,7 +58,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.1",
-    "sharp": "^0.35.4",
+    "sharp": "^0.35.5",
     "typescript": "^7.0.2",
     "vitest": "^5.0.0"
   },

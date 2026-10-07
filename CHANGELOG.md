@@ -9,6 +9,24 @@ version had. Those changes are listed under **Changed** with what they affect.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-06
+
+Dependency floors only. No code changed. The lockfile does not ship to
+installers, so a fresh install of 0.4.0 could still resolve dependency
+releases with published advisories. This release raises the floors so it cannot.
+
+### Security
+
+- **`@modelcontextprotocol/sdk` now requires `^1.32.1`.** Releases 1.12.0
+  through 1.30.1 have an OAuth client that could send credentials to an
+  authorization server chosen by the MCP server.
+- **The `sharp` peer dependency now requires `^0.35.5`.** Earlier releases bundle
+  a librsvg affected by CVE-2026-96889. An install that already has an older
+  sharp now gets a peer-dependency warning.
+- Development and transitive dependencies are updated, including `proxy-addr`
+  2.0.8, `fast-uri` 3.1.8, and `ip-address` 10.7.3. `npm audit` reports no
+  known vulnerabilities.
+
 ## [0.4.0] - 2026-09-18
 
 Gives an agent the controls it needs to spend less, and works through what the
@@ -315,7 +333,8 @@ rather than half of one, and telling a caller what actually happened.
 
 Initial release.
 
-[unreleased]: https://github.com/KingPin/SubPixel/compare/v0.4.0...HEAD
+[unreleased]: https://github.com/KingPin/SubPixel/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/KingPin/SubPixel/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/KingPin/SubPixel/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/KingPin/SubPixel/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/KingPin/SubPixel/compare/v0.1.0...v0.2.0

@@ -9,6 +9,26 @@ version had. Those changes are listed under **Changed** with what they affect.
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-11
+
+Dependency refresh only. No code changed. The vulnerable packages are all
+transitive dependencies of `@modelcontextprotocol/sdk`, and their fixed
+releases are inside the ranges it already allows. A fresh install gets them.
+This release exists so that `npx subpixel` and other cached installs resolve
+the dependency tree again.
+
+### Security
+
+- `body-parser` 2.4.0 fixes a denial of service through trailing bytes after a
+  compressed request body (CVE-2026-111181).
+- `fast-uri` 3.1.9 fixes scheme spoofing, host confusion, scheme injection, and
+  path equivalence in reference normalization (CVE-2026-110306,
+  CVE-2026-110180, CVE-2026-110725, CVE-2026-110095).
+- `ip-address` 10.7.6 fixes quadratic-time matching of an IPv6 zone identifier
+  (CVE-2026-111997).
+- `@modelcontextprotocol/sdk` 1.32.2, `qs` 6.17.1, and `zod` 4.6.7 are updated
+  in the lockfile. `npm audit` reports no known vulnerabilities.
+
 ## [0.4.1] - 2026-10-06
 
 Dependency floors only. No code changed. The lockfile does not ship to
@@ -333,7 +353,8 @@ rather than half of one, and telling a caller what actually happened.
 
 Initial release.
 
-[unreleased]: https://github.com/KingPin/SubPixel/compare/v0.4.1...HEAD
+[unreleased]: https://github.com/KingPin/SubPixel/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/KingPin/SubPixel/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/KingPin/SubPixel/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/KingPin/SubPixel/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/KingPin/SubPixel/compare/v0.2.0...v0.3.0
